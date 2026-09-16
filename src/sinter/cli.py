@@ -8,8 +8,10 @@ import sys
 
 from sinter import __version__
 from sinter.config import load_config, validate_profile
+from sinter.gguf import read_gguf_header
 from sinter.hardware import probe
 from sinter.lock import acquire_lock
+from sinter.memory import check_admission
 from sinter.supervisor import Supervisor
 
 
@@ -116,26 +118,43 @@ def cmd_plan(args: argparse.Namespace) -> int:
     profile = config.profiles[args.profile]
     errors = validate_profile(profile)
 
-    # Estimate memory requirements
-    weights_size_gb = 0
+    # Parse GGUF header if weights exist
+    gguf_info = None
     if profile.weights_path.exists():
-        weights_size_gb = profile.weights_path.stat().st_size / (1024**3)
+        gguf_info = read_gguf_header(profile.weights_path)
 
-    # Rough KV cache estimate
-    # M_KV ≈ N_seq × sum over layers [C_l × (H_K × D_K + H_V × D_V)]
-    # For a 27B model with ctx=131072, this is substantial
-    kv_estimate_gb = (profile.ctx_size * 2 * 5120 * 4) / (1024**3)  # rough
+    # Run admission check
+    admission = None
+    if gguf_info and not gguf_info.errors:
+        admission = check_admission(profile, gguf_info)
 
     result = {
         "profile": profile.alias,
         "weights": {
             "path": str(profile.weights_path),
-            "size_gb": round(weights_size_gb, 1) if weights_size_gb else None,
+            "size_gb": round(gguf_info.total_bytes / (1024**3), 1) if gguf_info else None,
             "exists": profile.weights_path.exists(),
+            "arch": gguf_info.arch if gguf_info else None,
+            "params": gguf_info.params if gguf_info else None,
+            "n_layers": gguf_info.n_layers if gguf_info else None,
+            "context_length": gguf_info.context_length if gguf_info else None,
         },
         "backend": {
             "binary": str(profile.backend_binary),
             "exists": profile.backend_binary.exists(),
+        },
+        "admission": {
+            "admitted": admission.admitted if admission else None,
+            "reason": admission.reason if admission else None,
+            "weights_gb": round(admission.weights_bytes / (1024**3), 1) if admission else None,
+            "kv_cache_gb": round(admission.kv_bytes / (1024**3), 1) if admission else None,
+            "compute_gb": round(admission.compute_bytes / (1024**3), 1) if admission else None,
+            "reserve_gb": round(admission.reserve_bytes / (1024**3), 2) if admission else None,
+            "required_gb": round(admission.required_bytes / (1024**3), 1) if admission else None,
+            "available_gb": (
+                round(admission.available_bytes / (1024**3), 1)
+                if admission and admission.available_bytes else None
+            ),
         },
         "requested": {
             "device": profile.device,
@@ -147,14 +166,6 @@ def cmd_plan(args: argparse.Namespace) -> int:
             "threads": profile.threads,
             "port": profile.port,
             "host": profile.host,
-        },
-        "memory_estimate": {
-            "weights_gb": round(weights_size_gb, 1),
-            "kv_cache_gb": round(kv_estimate_gb, 1),
-            "reserve_gb": round(profile.reserve_bytes / (1024**3), 2),
-            "total_estimated_gb": round(
-                weights_size_gb + kv_estimate_gb + profile.reserve_bytes / (1024**3), 1
-            ),
         },
         "validation_errors": errors,
         "supported": {
@@ -170,7 +181,14 @@ def cmd_plan(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2))
     else:
         print(f"Plan for profile '{profile.alias}':")
-        print(f"  Weights: {profile.weights_path} ({result['memory_estimate']['weights_gb']} GB)")
+        print(f"  Weights: {profile.weights_path}")
+        if result["weights"]["size_gb"]:
+            print(f"  Weight size: {result['weights']['size_gb']} GB")
+        if gguf_info:
+            print(f"  Architecture: {gguf_info.arch}")
+            print(f"  Parameters: {gguf_info.params}")
+            print(f"  Layers: {gguf_info.n_layers}")
+            print(f"  Model context: {gguf_info.context_length}")
         print(f"  Backend: {profile.backend_binary}")
         print(f"  Device: {profile.device}")
         print(f"  GPU layers: {profile.n_gpu_layers}")
@@ -179,7 +197,12 @@ def cmd_plan(args: argparse.Namespace) -> int:
         print(f"  Flash attention: {profile.flash_attn}")
         print(f"  Threads: {profile.threads}")
         print(f"  Port: {profile.host}:{profile.port}")
-        print(f"  Memory estimate: {result['memory_estimate']['total_estimated_gb']} GB")
+        if result["admission"]["admitted"] is not None:
+            print(f"  Admission: {'ADMITTED' if result['admission']['admitted'] else 'REJECTED'}")
+            print(f"  Reason: {result['admission']['reason']}")
+            print(f"  Required: {result['admission']['required_gb']} GB")
+            if result["admission"]["available_gb"]:
+                print(f"  Available: {result['admission']['available_gb']} GB")
         if errors:
             print("  Validation errors:")
             for err in errors:
