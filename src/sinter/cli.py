@@ -5,13 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import asdict
-from pathlib import Path
 
 from sinter import __version__
-from sinter.config import SinterConfig, load_config, validate_profile
+from sinter.config import load_config, validate_profile
 from sinter.hardware import probe
-from sinter.state import load_state
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -58,11 +55,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         if info.gpu_name:
             print(f"  GPU: {info.gpu_name} ({info.gpu_pci})")
             if info.gpu_vram_total_gb:
-                print(f"  VRAM: {info.gpu_vram_used_gb:.1f} GB / {info.gpu_vram_total_gb:.1f} GB used")
+                print(
+                    f"  VRAM: {info.gpu_vram_used_gb:.1f} GB / {info.gpu_vram_total_gb:.1f} GB used"
+                )
         else:
             print("  GPU: not detected")
         print(f"  ROCm: {info.rocm_version or 'not detected'}")
-        print(f"  llama-server: {'running on port ' + str(info.llama_server_port) if info.llama_server_running else 'not running'}")
+        if info.llama_server_running:
+            print(f"  llama-server: running on port {info.llama_server_port}")
+        else:
+            print("  llama-server: not running")
         if info.llama_server_version:
             print(f"  llama-server version: {info.llama_server_version}")
         if info.errors:
@@ -148,7 +150,9 @@ def cmd_plan(args: argparse.Namespace) -> int:
             "weights_gb": round(weights_size_gb, 1),
             "kv_cache_gb": round(kv_estimate_gb, 1),
             "reserve_gb": round(profile.reserve_bytes / (1024**3), 2),
-            "total_estimated_gb": round(weights_size_gb + kv_estimate_gb + profile.reserve_bytes / (1024**3), 1),
+            "total_estimated_gb": round(
+                weights_size_gb + kv_estimate_gb + profile.reserve_bytes / (1024**3), 1
+            ),
         },
         "validation_errors": errors,
         "supported": {

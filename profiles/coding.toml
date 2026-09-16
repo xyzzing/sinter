@@ -5,7 +5,7 @@
 
 [profiles.coding]
 alias = "coding"
-weights_path = "/home/zacch/models/Qwen3.8-27B-TTURFO-Fable-C-Fusion-709-L-Uncen-NM-DAU-NEO-MTP-IQ4_XS.gguf"
+weights_path = "/home/zacch/models/Qwen3.8-27B-TTURBO-Fable-C-Fusion-709-L-Uncen-NM-DAU-NEO-MTP-IQ4_XS.gguf"
 backend_binary = "/home/zacch/llama_rocmfpx_build/ROCmFPX/build/bin/llama-server"
 device = "ROCm0"
 n_gpu_layers = 63

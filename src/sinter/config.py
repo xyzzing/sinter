@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import os
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
-
-import tomllib
-
+from typing import Optional
 
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "sinter"
 DEFAULT_STATE_DIR = Path.home() / ".local" / "state" / "sinter"

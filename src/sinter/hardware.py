@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
-import sys
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 
 @dataclass
@@ -117,7 +114,8 @@ def get_gpu_info() -> tuple[Optional[str], Optional[str]]:
             # Extract name and PCI ID
             parts = line.split(": ", 2)
             if len(parts) >= 3:
-                # parts[2] is like "Advanced Micro Devices, Inc. [AMD/ATI] Navi 31 [Radeon RX 7900 XT/7900 XTX/7900 GRE/7900M] [1002:744c] (rev c8)"
+                # parts[2] is like "Advanced Micro Devices, Inc. [AMD/ATI] Navi 31"
+                # "[Radeon RX 7900 XT/7900 XTX/7900 GRE/7900M] [1002:744c] (rev c8)"
                 name = parts[2].split(" [")[0]
                 pci_id = parts[2].split("[")[-1].rstrip("] (rev c8)").rstrip("]")
                 return name, pci_id
