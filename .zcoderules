@@ -1,0 +1,4 @@
+# Agent Operational Invariants
+- Consult SPEC.md / ARCHITECTURE.md before modifying codebase.
+- Execute deterministic validation (linters/tests) before finalizing code.
+- Prevent hardcoded secrets; use environment variables.

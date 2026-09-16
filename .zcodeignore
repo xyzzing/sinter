@@ -1,0 +1,8 @@
+# Exclude non-source assets from agent token indexing
+*.png
+*.jpg
+*.svg
+*.lock
+dist/
+build/
+coverage/

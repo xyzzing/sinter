@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "local-tools": {
+      "command": "python",
+      "args": ["-m", "http.server", "8000"],
+      "disabled": true
+    }
+  }
+}

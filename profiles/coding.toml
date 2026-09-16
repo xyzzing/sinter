@@ -1,0 +1,23 @@
+# SINTER profile: coding
+# Model: Qwen3.8-27B-TTURBO-Fable-C-Fusion-709-L-Uncen-NM-DAU-NEO-MTP-IQ4_XS.gguf
+# Quantization: IQ4_XS
+# Parameters: ~27.3B
+
+[profiles.coding]
+alias = "coding"
+weights_path = "/home/zacch/models/Qwen3.8-27B-TTURFO-Fable-C-Fusion-709-L-Uncen-NM-DAU-NEO-MTP-IQ4_XS.gguf"
+backend_binary = "/home/zacch/llama_rocmfpx_build/ROCmFPX/build/bin/llama-server"
+device = "ROCm0"
+n_gpu_layers = 63
+ctx_size = 131072
+cache_type_k = "q4_0"
+cache_type_v = "q4_0"
+flash_attn = true
+batch_size = 4096
+ubatch_size = 1024
+threads = 6
+n_parallel = 1
+port = 8080
+host = "127.0.0.1"
+chat_template = "/home/zacch/.config/llama-models/templates/qwen-sharp.jinja"
+reserve_bytes = 536870912  # 512 MiB
