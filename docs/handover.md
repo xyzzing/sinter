@@ -1,8 +1,8 @@
 # SINTER — Handover Document
 
 **Date:** 2026-09-16
-**Completed:** T00 (capability report), T01 (raw backend spike), T02 (minimal package, config schema, atomic state, plan/doctor interfaces), T03 (ownership, lock, state machine, launch/readiness/stop), T04 (bounded GGUF validation and memory/profile qualification)
-**Next:** T05 (one real client acceptance journey and private logging)
+**Completed:** T00 (capability report), T01 (raw backend spike), T02 (minimal package, config schema, atomic state, plan/doctor interfaces), T03 (ownership, lock, state machine, launch/readiness/stop), T04 (bounded GGUF validation and memory/profile qualification), T05 (private operational logging and acceptance tests)
+**Next:** T06 (adversarial code review and repair)
 
 ## 1. What Has Been Done
 
@@ -22,15 +22,55 @@
 - Server remained healthy throughout all tests
 - API is OpenAI-compatible
 
+### T02 — Minimal Package & Interfaces
+- Created Python package structure (`src/sinter/`)
+- Configuration schema (TOML) with ProfileSpec and SinterConfig dataclasses
+- Atomic state management (write-temp-then-rename)
+- CLI: `doctor`, `validate`, `plan`, `up`, `down`, `status` (all support `--json`)
+- Hardware probing (kernel, CPU, RAM, GPU, VRAM, ROCm, llama-server)
+- Editable install via hatchling (`pip install -e .`)
+
+### T03 — Ownership, Lock, State Machine, Lifecycle
+- Process ownership via (PID, start_time, instance_uuid) tuple
+- Exclusive file lock via O_CREAT|O_EXCL on $XDG_RUNTIME_DIR/sinter/sinter.lock
+- Finite state machine: STOPPED→VALIDATING→STARTING→READY→STOPPED/FAILED/DEGRADED
+- Supervisor (Crucible) with launch/readiness polling/SIGTERM→SIGKILL/DEGRADED escalation
+- XDG Base Directory spec compliance
+
+### T04 — Bounded GGUF Validation & Memory Admission
+- Bounded GGUF header parser (`src/sinter/gguf.py`) — never loads tensor data
+- VRAM telemetry via sysfs (`/sys/class/drm/card*/device/mem_info_vram_*`)
+- KV cache estimation from actual model architecture parameters
+- Memory admission formula: `weights + KV + compute + reserve ≤ available_VRAM`
+- `sinter plan` now shows GGUF metadata and admission decision
+- Profile config with correct backend path
+
+### T05 — Private Operational Logging & Acceptance Tests
+- `src/sinter/logging.py`: OperationalLogger — JSON lines, 600 perms, operational events only
+- Supervisor integrated with logging (launch_start, launch_ready, launch_failed_validation, stop_starting, stop_sigterm, stop_completed, etc.)
+- `tests/integration/test_acceptance.py`: full client journey test + logging verification
+- `sinter plan` uses llama-server API for model info when server is running
+- 43 tests passing, ruff clean, agentic verification passing
+
 ## 2. Current State
 
-### Files
-- `docs/prd.md` — Product Requirements Document (v6.0)
-- `docs/capabilities.md` — Hardware capability report + T01 results
-- `SKILLS.md` — Pre-existing skill documentation
+### Package Structure
+```
+src/sinter/
+├── __init__.py
+├── cli.py            # CLI entry point
+├── config.py         # ProfileSpec, SinterConfig, TOML loading
+├── hardware.py       # Hardware probing
+├── state.py          # Atomic state management
+├── lock.py           # Exclusive file lock
+├── supervisor.py     # Crucible — process supervisor
+├── gguf.py           # Bounded GGUF parser
+├── memory.py         # VRAM telemetry & admission
+└── logging.py        # Private operational logging
+```
 
 ### Running Services
-- llama-server v257 on 0.0.0.0:8080 (PID 485578)
+- llama-server v257 on 0.0.0.0:8080 (PID varies)
 - Model: Qwen3.8-27B-TTURBO-Fable-C-Fusion-709-L-Uncen-NM-DAU-NEO-MTP-IQ4_XS.gguf
 - Config: 63 GPU layers, ctx=131072, KV cache q4_0, flash attn on
 
@@ -40,61 +80,49 @@
 - F26: Model provenance/license unverified
 - PR #16391: Prompt cache disabled (SIGABRT on ROCm)
 - TOP_K: ROCm lacks GPU-side op (runs on CPU)
+- GGUF parser has limited support for non-standard value type encodings
 
 ## 3. What Needs to Be Done Next
 
-### T02 — Minimal Package & Interfaces
+### T06 — Adversarial Code Review and Repair
 **Scope:**
-- Create minimal Python package structure (Python 3.11+)
-- Configuration schema (TOML input)
-- Atomic state management
-- `sinter doctor --json` — read-only device/capability report
-- `sinter profile validate coding` — validate profile schema without loading weights
-- `sinter plan coding --json` — explain requested vs effective settings
+- Thorough code review of all modules
+- Fix any security, correctness, or robustness issues
+- Edge case testing
+- Error handling review
+- Concurrency review
 
-**Dependencies:** None (T01 is complete)
+**Dependencies:** T05 is complete
 
 **Acceptance evidence:**
-- Malformed configuration tests pass
-- Missing-sensor tests pass
-- Reproducible install
+- All issues found are fixed or documented
+- Tests cover the fixed issues
+- Agentic verification passes
 
-**Suggested executor:** GLM/ZCode
+### T07 — Baseline Comparison, Install/Uninstall, Operational Guide
+**Scope:**
+- Baseline performance comparison vs current setup
+- Install/uninstall instructions
+- Operational guide for daily use
 
-### Subsequent Tickets
-- T03: Ownership, lock, state machine, launch/readiness/stop
-- T04: Bounded GGUF validation and memory/profile qualification
-- T05: One real client acceptance journey and private logging
-- T06: Adversarial code review and repair
-- T07: Baseline comparison, install/uninstall, operational guide
+## 4. Verification Commands
 
-## 4. Available Skills in This Session
+```bash
+# Run all tests
+python3 -m pytest tests/ -v
 
-The following skills are available but **none are relevant** to SINTER development:
+# Run agentic verification
+python3 .agentic/verify.py
 
-| Skill | Relevance |
-|---|---|
-| animate | ❌ Frontend animation |
-| animate-expo | ❌ React Native animation |
-| animation-vocabulary | ❌ Animation terminology |
-| apple-design | ❌ Apple design patterns |
-| ask-sonner | ❌ Toast notification library |
-| better-ui | ❌ UI polish |
-| design-taste-frontend | ❌ Landing page design |
-| emil-design-eng | ❌ UI polish philosophy |
-| find-animation-opportunities | ❌ Animation audit |
-| find-skills | ❌ Skill discovery |
-| improve-animations | ❌ Animation audit |
-| mobile-native | ❌ Mobile web optimization |
-| write-swift | ❌ Swift programming |
+# Run lint
+python3 -m ruff check src/ tests/
 
-**Relevant skills needed but not available:**
-- Python backend development
-- ROCm/HIP GPU programming
-- llama.cpp integration
-- CLI tool design
-- System service management (systemd)
-- Memory profiling and optimization
+# CLI commands
+python3 -m sinter.cli doctor --json
+python3 -m sinter.cli validate coding
+python3 -m sinter.cli plan coding
+python3 -m sinter.cli status
+```
 
 ## 5. Key Environment Facts
 
@@ -108,53 +136,19 @@ The following skills are available but **none are relevant** to SINTER developme
 | llama-server | v257 (c49ebdb), ROCmFPX build |
 | Model | Qwen3.8-27B-TTURBO-Fable-C-Fusion-709-L-Uncen-NM-DAU-NEO-MTP-IQ4_XS.gguf |
 | Server URL | http://0.0.0.0:8080 |
-| ROCM_PATH | /opt/rocm (stale; actual libs in /lib64) |
-| HSA_OVERRIDE_GFX_VERSION | 11.0.0 |
+| Backend binary | /home/zacch/workspace/03_infra/llama_rocmfpx_build/ROCmFPX/build/bin/llama-server |
 
-## 6. Verification Commands
-
-```bash
-# Server health
-curl -s http://localhost:8080/health
-
-# Model info
-curl -s http://localhost:8080/v1/models | python3 -m json.tool
-
-# Quick completion test
-curl -s -X POST http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model": "Qwen3.8-27B-TTURBO-Fable-C-Fusion-709-L-Uncen-NM-DAU-NEO-MTP-IQ4_XS.gguf", "messages": [{"role": "user", "content": "Hello"}], "max_tokens": 10}'
-
-# VRAM usage
-rocm-smi --showmeminfo vram
-
-# llama-server process
-ps aux | grep llama-server
-```
-
-## 7. Risks & Caveats
-
-- **ROCm version:** 7.1.1, not 6.x as documented. Verify ROCm 6.x vs 7.x compatibility for any driver-related work.
-- **ROCM_PATH:** Environment variable points to non-existent /opt/rocm. Actual libraries are in /lib64. This may confuse tools that rely on ROCM_PATH.
-- **Model provenance:** The model name suggests it's a community merge. No source repository, SHA, or license has been verified (F26).
-- **MTP support:** Unverified (F14). The model name includes "MTP" but no evidence was found in API responses.
-- **Network exposure:** Server is bound to 0.0.0.0:8080 (LAN accessible) with no authentication by default.
-
-## 8. Handover Notes
+## 6. Handover Notes
 
 This is a **local inference supervisor** project for a single developer using an AMD workstation. The goal is to make starting/recovering local coding sessions more reliable than the current pinned llama-server command.
 
-The raw backend is proven to work (T01). The next step is building the supervisor layer (T02+).
+The raw backend is proven to work (T01). The supervisor layer is complete through T05 (config, state, lock, supervisor, GGUF validation, memory admission, logging). The next step is adversarial code review (T06).
 
 Key design principles from the PRD:
 - Single user, single machine, single GPU
-- Python 3.11+ control plane
+- Python 3.11+ control plane (stdlib only)
 - Foreground mode first, optional systemd service later
 - No custom proxy or intent router for MVP
 - Explicit profile selection (no silent model swapping)
 - Atomic writes, private control socket under XDG_RUNTIME_DIR
 - No shell command strings in model metadata
-
-## 9. Contact / Context
-
-This handover is for the next agent or developer taking over SINTER development. All verified facts are in `docs/capabilities.md`. The product contract is in `docs/prd.md`. Start with T02.
