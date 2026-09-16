@@ -1,8 +1,8 @@
 # SINTER — Handover Document
 
 **Date:** 2026-09-16
-**Completed:** T00 (capability report), T01 (raw backend spike)
-**Next:** T02 (minimal package, config schema, atomic state, plan/doctor interfaces)
+**Completed:** T00 (capability report), T01 (raw backend spike), T02 (minimal package, config schema, atomic state, plan/doctor interfaces)
+**Next:** T03 (ownership, lock, state machine, launch/readiness/stop)
 
 ## 1. What Has Been Done
 
