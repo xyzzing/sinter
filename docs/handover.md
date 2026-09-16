@@ -1,8 +1,8 @@
 # SINTER — Handover Document
 
 **Date:** 2026-09-16
-**Completed:** T00 (capability report), T01 (raw backend spike), T02 (minimal package, config schema, atomic state, plan/doctor interfaces), T03 (ownership, lock, state machine, launch/readiness/stop)
-**Next:** T04 (bounded GGUF validation and memory/profile qualification)
+**Completed:** T00 (capability report), T01 (raw backend spike), T02 (minimal package, config schema, atomic state, plan/doctor interfaces), T03 (ownership, lock, state machine, launch/readiness/stop), T04 (bounded GGUF validation and memory/profile qualification)
+**Next:** T05 (one real client acceptance journey and private logging)
 
 ## 1. What Has Been Done
 
