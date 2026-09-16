@@ -1,0 +1,15 @@
+{
+  "checks": [
+    {
+      "name": "ruff-lint",
+      "cwd": ".",
+      "argv": ["python3", "-m", "ruff", "check", "src/", "tests/"]
+    },
+    {
+      "name": "pytest",
+      "cwd": ".",
+      "argv": ["python3", "-m", "pytest", "tests/", "-v"],
+      "timeout": 300
+    }
+  ]
+}
