@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from sinter.config import ProfileSpec
+from sinter.logging import OperationalLogger
 
 
 @dataclass
@@ -48,9 +49,14 @@ class InstanceRecord:
 class Supervisor:
     """Manages llama-server lifecycle with state machine."""
 
-    def __init__(self, runtime_dir: Path, state_dir: Path):
+    def __init__(
+        self, runtime_dir: Path, state_dir: Path, log_dir: Optional[Path] = None
+    ):
         self.runtime_dir = runtime_dir
         self.state_dir = state_dir
+        if log_dir is None:
+            log_dir = state_dir / "logs"
+        self.logger = OperationalLogger(log_dir)
 
     def _read_proc_stat(self, pid: int) -> Optional[int]:
         """Read start_time from /proc/[pid]/stat. Returns None if process gone."""
@@ -129,11 +135,21 @@ class Supervisor:
 
     def launch(self, profile: ProfileSpec, timeout: float = 30.0) -> InstanceRecord:
         """Launch llama-server for a profile. State: STOPPED→VALIDATING→STARTING→READY."""
+        self.logger.info("launch_start", profile=profile.alias, ctx_size=profile.ctx_size,
+                         port=profile.port)
+
         # Validate first
         from sinter.config import validate_profile
 
         errors = validate_profile(profile)
         if errors:
+            self.logger.warn("launch_failed_validation", profile=profile.alias,
+                             errors=errors)
+            instance = InstanceRecord(profile=profile.alias)
+            instance.state = "FAILED"
+            instance.last_error = "; ".join(errors)
+            self.save_instance(instance)
+            return instance
             instance = InstanceRecord(profile=profile.alias)
             instance.state = "FAILED"
             instance.last_error = "; ".join(errors)
@@ -141,6 +157,7 @@ class Supervisor:
             return instance
 
         # Build command
+        self.logger.info("launch_building_cmd", profile=profile.alias)
         cmd = [
             str(profile.backend_binary),
             "-m", str(profile.weights_path),
@@ -171,6 +188,8 @@ class Supervisor:
             instance = InstanceRecord(profile=profile.alias)
             instance.state = "FAILED"
             instance.last_error = f"Port {profile.port} is in use: {e}"
+            self.logger.error("launch_port_conflict", profile=profile.alias,
+                              port=profile.port, error=str(e))
             self.save_instance(instance)
             return instance
 
@@ -189,6 +208,7 @@ class Supervisor:
             )
             instance.pid = proc.pid
             instance.start_time = self._read_proc_stat(proc.pid)
+            self.logger.info("launch_spawned", profile=profile.alias, pid=proc.pid)
             self.save_instance(instance)
         except OSError as e:
             instance.state = "FAILED"
@@ -206,6 +226,8 @@ class Supervisor:
                 with urllib.request.urlopen(req, timeout=2) as resp:
                     if resp.status == 200:
                         instance.state = "READY"
+                        self.logger.info("launch_ready", profile=profile.alias,
+                                          pid=proc.pid, port=profile.port)
                         self.save_instance(instance)
                         return instance
             except Exception:
@@ -222,6 +244,7 @@ class Supervisor:
 
         instance.state = "FAILED"
         instance.last_error = f"Backend did not become ready within {timeout}s"
+        self.logger.error("launch_timeout", profile=profile.alias, timeout=timeout)
         self.save_instance(instance)
         return instance
 
@@ -237,6 +260,7 @@ class Supervisor:
             return instance
 
         instance.state = "STOPPING"
+        self.logger.info("stop_starting", profile=instance.profile, pid=instance.pid)
         self.save_instance(instance)
 
         # Verify process is still ours
@@ -247,22 +271,27 @@ class Supervisor:
             return instance
 
         # SIGTERM
+        self.logger.info("stop_sigterm", profile=instance.profile, pid=instance.pid)
         self._send_signal(instance.pid, signal.SIGTERM)
         if self._poll_exit(instance.pid, timeout):
             instance.state = "STOPPED"
+            self.logger.info("stop_completed", profile=instance.profile)
             self.save_instance(instance)
             return instance
 
         # SIGKILL
+        self.logger.warn("stop_sigkill", profile=instance.profile, pid=instance.pid)
         self._send_signal(instance.pid, signal.SIGKILL)
         if self._poll_exit(instance.pid, kill_timeout):
             instance.state = "STOPPED"
+            self.logger.info("stop_completed", profile=instance.profile)
             self.save_instance(instance)
             return instance
 
         # Process still alive — degraded
         instance.state = "DEGRADED"
         instance.last_error = "Backend process did not exit after SIGKILL"
+        self.logger.error("stop_degraded", profile=instance.profile, pid=instance.pid)
         self.save_instance(instance)
         return instance
 

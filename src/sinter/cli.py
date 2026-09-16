@@ -118,10 +118,58 @@ def cmd_plan(args: argparse.Namespace) -> int:
     profile = config.profiles[args.profile]
     errors = validate_profile(profile)
 
-    # Parse GGUF header if weights exist
+    # Try llama-server API first for model info
     gguf_info = None
     if profile.weights_path.exists():
-        gguf_info = read_gguf_header(profile.weights_path)
+        try:
+            import urllib.error
+            import urllib.request
+
+            req = urllib.request.Request(f"http://{profile.host}:{profile.port}/v1/models")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
+                # Try data[].meta first (richer info), then models[].details
+                for m in data.get("data", []):
+                    meta = m.get("meta", {})
+                    if meta:
+                        gguf_info = type("GGUFInfo", (), {
+                            "total_bytes": meta.get("size", 0),
+                            "arch": "llama",
+                            "params": meta.get("n_params", 0),
+                            "n_layers": 0,
+                            "n_heads": 0,
+                            "n_kv_heads": 0,
+                            "embedding_dim": meta.get("n_embd", 0),
+                            "context_length": meta.get("n_ctx", 0),
+                            "errors": [],
+                        })()
+                        break
+                if gguf_info is None:
+                    for m in data.get("models", []):
+                        details = m.get("details", {})
+                        if details.get("format") == "gguf":
+                            gguf_info = type("GGUFInfo", (), {
+                                "total_bytes": details.get("size", 0),
+                                "arch": details.get("family", ""),
+                                "params": details.get("n_params", 0),
+                                "n_layers": 0,
+                                "n_heads": 0,
+                                "n_kv_heads": 0,
+                                "embedding_dim": details.get("n_embd", 0),
+                                "context_length": details.get("n_ctx", 0),
+                                "errors": [],
+                            })()
+                            break
+        except (urllib.error.URLError, OSError, json.JSONDecodeError):
+            # Server not running or API failed, fall back to GGUF parsing
+            pass
+
+    # Fall back to GGUF header parsing if API didn't work
+    if gguf_info is None and profile.weights_path.exists():
+        try:
+            gguf_info = read_gguf_header(profile.weights_path)
+        except Exception:
+            gguf_info = None
 
     # Run admission check
     admission = None
