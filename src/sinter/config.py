@@ -13,6 +13,13 @@ DEFAULT_STATE_DIR = Path.home() / ".local" / "state" / "sinter"
 DEFAULT_DATA_DIR = Path.home() / ".local" / "share" / "sinter"
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "sinter"
 
+# XDG_RUNTIME_DIR takes priority; fall back to /run/user/$UID/sinter
+_xdg_runtime = os.environ.get("XDG_RUNTIME_DIR")
+if _xdg_runtime:
+    DEFAULT_RUNTIME_DIR = Path(_xdg_runtime) / "sinter"
+else:
+    DEFAULT_RUNTIME_DIR = Path(f"/run/user/{os.getuid()}/sinter")
+
 
 @dataclass
 class ProfileSpec:
@@ -45,6 +52,7 @@ class SinterConfig:
     profiles: dict[str, ProfileSpec] = field(default_factory=dict)
     default_profile: str = "coding"
     config_dir: Path = DEFAULT_CONFIG_DIR
+    runtime_dir: Path = DEFAULT_RUNTIME_DIR
     state_dir: Path = DEFAULT_STATE_DIR
     data_dir: Path = DEFAULT_DATA_DIR
     cache_dir: Path = DEFAULT_CACHE_DIR

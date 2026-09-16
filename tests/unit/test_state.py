@@ -6,8 +6,6 @@ import json
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from sinter.state import AtomicFile, StateRecord, load_state, save_state
 
 

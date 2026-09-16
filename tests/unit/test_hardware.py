@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-import pytest
-
 from sinter.hardware import (
+    check_llama_server,
+    get_cpu_info,
+    get_gpu_info,
     get_kernel,
     get_os_release,
-    get_cpu_info,
     get_ram_info,
-    get_gpu_info,
     get_rocm_version,
     get_vram_info,
-    check_llama_server,
     probe,
 )
 

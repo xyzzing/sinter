@@ -9,6 +9,8 @@ import sys
 from sinter import __version__
 from sinter.config import load_config, validate_profile
 from sinter.hardware import probe
+from sinter.lock import acquire_lock
+from sinter.supervisor import Supervisor
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -188,6 +190,94 @@ def cmd_plan(args: argparse.Namespace) -> int:
     return 0 if not errors else 1
 
 
+def cmd_up(args: argparse.Namespace) -> int:
+    """Start llama-server for a profile."""
+    config = load_config()
+    if args.profile not in config.profiles:
+        print(f"Error: profile '{args.profile}' not found")
+        return 1
+
+    profile = config.profiles[args.profile]
+    runtime_dir = config.runtime_dir
+    state_dir = config.state_dir
+
+    try:
+        with acquire_lock(runtime_dir):
+            sup = Supervisor(runtime_dir, state_dir)
+            # Check if already running
+            existing = sup.status()
+            if existing.state in ("READY", "STARTING"):
+                print(f"Backend already {existing.state} (instance {existing.instance_uuid})")
+                return 0
+
+            print(f"Launching profile '{profile.alias}'...")
+            instance = sup.launch(profile, timeout=args.timeout)
+
+            if instance.state == "READY":
+                print(f"Backend READY (instance {instance.instance_uuid}, PID {instance.pid})")
+                print(f"  Port: {instance.port}")
+                return 0
+            else:
+                print(f"Launch FAILED: {instance.last_error}")
+                return 1
+    except TimeoutError:
+        print("Error: could not acquire supervisor lock (another sinter operation in progress)")
+        return 1
+
+
+def cmd_down(args: argparse.Namespace) -> int:
+    """Stop the running llama-server."""
+    config = load_config()
+    runtime_dir = config.runtime_dir
+    state_dir = config.state_dir
+
+    try:
+        with acquire_lock(runtime_dir):
+            sup = Supervisor(runtime_dir, state_dir)
+            instance = sup.stop(timeout=args.timeout)
+
+            if instance.state == "STOPPED":
+                print("Backend stopped.")
+                return 0
+            elif instance.state == "DEGRADED":
+                print(f"WARNING: degraded stop — {instance.last_error}")
+                return 1
+            else:
+                print(f"Backend stopped (was in state: {instance.state}).")
+                return 0
+    except TimeoutError:
+        print("Error: could not acquire supervisor lock")
+        return 1
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """Show current instance status."""
+    config = load_config()
+    sup = Supervisor(config.runtime_dir, config.state_dir)
+    instance = sup.status()
+
+    result = instance.to_dict()
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"State: {instance.state}")
+        if instance.instance_uuid:
+            print(f"Instance: {instance.instance_uuid}")
+        if instance.pid:
+            print(f"PID: {instance.pid}")
+        if instance.port:
+            print(f"Port: {instance.port}")
+        if instance.profile:
+            print(f"Profile: {instance.profile}")
+        if instance.created_at:
+            print(f"Started: {instance.created_at}")
+        if instance.last_error:
+            print(f"Error: {instance.last_error}")
+
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="sinter",
@@ -212,6 +302,25 @@ def main(argv: list[str] | None = None) -> int:
     p_plan.add_argument("profile", help="Profile alias to plan")
     p_plan.add_argument("--json", action="store_true", help="Output as JSON")
     p_plan.set_defaults(func=cmd_plan)
+
+    # up
+    p_up = subparsers.add_parser("up", help="Start llama-server for a profile")
+    p_up.add_argument("profile", help="Profile alias to start")
+    p_up.add_argument("--timeout", type=float, default=30.0, help="Readiness timeout (seconds)")
+    p_up.set_defaults(func=cmd_up)
+
+    # down
+    p_down = subparsers.add_parser("down", help="Stop the running llama-server")
+    p_down.add_argument(
+        "--timeout", type=float, default=10.0,
+        help="Graceful shutdown timeout (seconds)",
+    )
+    p_down.set_defaults(func=cmd_down)
+
+    # status
+    p_status = subparsers.add_parser("status", help="Show current instance status")
+    p_status.add_argument("--json", action="store_true", help="Output as JSON")
+    p_status.set_defaults(func=cmd_status)
 
     args = parser.parse_args(argv)
     return args.func(args)
