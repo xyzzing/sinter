@@ -128,7 +128,9 @@ def get_rocm_version() -> Optional[str]:
     if rpm:
         for line in rpm.splitlines():
             if line.startswith("rocm-runtime-"):
-                return line.split("-")[2]
+                parts = line.split("-")
+                if len(parts) >= 3:
+                    return parts[2]
     return None
 
 

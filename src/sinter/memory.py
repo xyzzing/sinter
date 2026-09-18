@@ -120,9 +120,17 @@ def check_admission(profile: ProfileSpec, gguf_info: GGUFInfo) -> AdmissionResul
 
     # Compute head dimension
     if gguf_info.embedding_dim and gguf_info.n_heads:
+        if gguf_info.embedding_dim % gguf_info.n_heads != 0:
+            # embedding_dim should be divisible by n_heads; warn but proceed
+            import logging
+            logging.getLogger(__name__).warning(
+                "embedding_dim (%d) not divisible by n_heads (%d); "
+                "head_dim calculation may be inaccurate",
+                gguf_info.embedding_dim, gguf_info.n_heads,
+            )
         head_dim = gguf_info.embedding_dim // gguf_info.n_heads
     else:
-        head_dim = 128  # default
+        head_dim = 128  # conservative default when architecture unknown
 
     # KV cache bytes
     kv_bytes = estimate_kv_bytes(

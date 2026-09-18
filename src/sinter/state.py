@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Optional
 
@@ -53,8 +53,11 @@ def load_state(state_dir: Path) -> StateRecord:
     try:
         with open(state_path) as f:
             data = json.load(f)
-        return StateRecord(**data)
-    except (json.JSONDecodeError, KeyError):
+        # Filter to known fields to handle schema evolution gracefully
+        known_fields = {f.name for f in fields(StateRecord)}
+        filtered = {k: v for k, v in data.items() if k in known_fields}
+        return StateRecord(**filtered)
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         return StateRecord()
 
 

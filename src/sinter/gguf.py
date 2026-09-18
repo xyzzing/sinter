@@ -8,13 +8,14 @@ use and rejects malformed structures.
 from __future__ import annotations
 
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
 GGUF_MAGIC = b"GGUF"
 MAX_METADATA_KEYS = 1000
 MAX_STRING_LEN = 65536
+MAX_ARRAY_ELEMENTS = 10000
 
 
 @dataclass
@@ -24,7 +25,7 @@ class GGUFInfo:
     version: int
     tensor_count: int
     kv_count: int
-    kv: dict[str, Any] = None
+    kv: dict[str, Any] = field(default_factory=dict)
     arch: str = ""
     params: int = 0
     vocab_size: int = 0
@@ -34,7 +35,7 @@ class GGUFInfo:
     n_kv_heads: int = 0
     context_length: int = 0
     total_bytes: int = 0
-    errors: list[str] = None
+    errors: list[str] = field(default_factory=list)
 
 
 def read_gguf_header(path: Path) -> Optional[GGUFInfo]:
@@ -169,6 +170,8 @@ def _read_gguf_value(f, value_type: int) -> Any:
         element_type = value_type - 256
         count_bytes = f.read(8)
         count = struct.unpack("<Q", count_bytes)[0]
+        if count > MAX_ARRAY_ELEMENTS:
+            raise ValueError(f"Array too large: {count} elements")
         elements = []
         for _ in range(count):
             elements.append(_read_gguf_value(f, element_type))

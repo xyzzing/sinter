@@ -59,13 +59,29 @@ class Supervisor:
         self.logger = OperationalLogger(log_dir)
 
     def _read_proc_stat(self, pid: int) -> Optional[int]:
-        """Read start_time from /proc/[pid]/stat. Returns None if process gone."""
+        """Read start_time from /proc/[pid]/stat. Returns None if process gone.
+
+        Field 2 (comm) can contain spaces and parentheses, so we find the last ')'
+        and split from there to get reliable field positions.
+        """
         try:
             with open(f"/proc/{pid}/stat") as f:
                 content = f.read()
-            # Field 22 is start_time (ticks since boot)
-            fields = content.split(" ")
-            return int(fields[19])
+            # Find end of comm field (last ')' in the file)
+            idx = content.rfind(")")
+            if idx < 0:
+                return None
+            # Fields after comm: state(3) ... start_time(22) = 20th field after ')'
+            # After ')' comes: ' state ppid pgrp session tty_nr tpgid flags ...'
+            # start_time is field 22 overall, which is index 19 in the array after
+            # splitting on spaces starting after the ')'.
+            after_comm = content[idx + 1:].strip()
+            fields = after_comm.split()
+            # after_comm fields: state(0), ppid(1), pgrp(2), session(3), tty_nr(4),
+            # tpgid(5), flags(6), minflt(7), cminflt(8), majflt(9), cmajflt(10),
+            # utime(11), stime(12), cutime(13), cstime(14), priority(15), nice(16),
+            # num_threads(17), itrealvalue(18), starttime(19)
+            return int(fields[20])
         except (FileNotFoundError, OSError, IndexError, ValueError):
             return None
 
@@ -75,13 +91,19 @@ class Supervisor:
         return actual_start is not None and actual_start == expected_start_time
 
     def _send_signal(self, pid: int, sig: int) -> bool:
-        """Send signal to process. Returns False if process gone."""
+        """Send signal to process. Returns False if process gone.
+
+        On PermissionError, the PID exists but belongs to another process
+        (PID wrap or reuse) — not ours.
+        """
         try:
             os.kill(pid, sig)
             return True
         except ProcessLookupError:
             return False
         except PermissionError:
+            # PID exists but is not our process
+            self.logger.warn("signal_permission_denied", pid=pid, signal=sig)
             return False
 
     def _poll_exit(self, pid: int, timeout: float) -> bool:
@@ -133,8 +155,17 @@ class Supervisor:
                 pass
             raise
 
-    def launch(self, profile: ProfileSpec, timeout: float = 30.0) -> InstanceRecord:
-        """Launch llama-server for a profile. State: STOPPED→VALIDATING→STARTING→READY."""
+    def launch(
+        self,
+        profile: ProfileSpec,
+        timeout: float = 30.0,
+        foreground: bool = False,
+    ) -> InstanceRecord:
+        """Launch llama-server for a profile. State: STOPPED→VALIDATING→STARTING→READY.
+
+        If foreground is True, the subprocess stdout/stderr are attached to the
+        controlling terminal instead of a log file.
+        """
         self.logger.info("launch_start", profile=profile.alias, ctx_size=profile.ctx_size,
                          port=profile.port)
 
@@ -145,11 +176,6 @@ class Supervisor:
         if errors:
             self.logger.warn("launch_failed_validation", profile=profile.alias,
                              errors=errors)
-            instance = InstanceRecord(profile=profile.alias)
-            instance.state = "FAILED"
-            instance.last_error = "; ".join(errors)
-            self.save_instance(instance)
-            return instance
             instance = InstanceRecord(profile=profile.alias)
             instance.state = "FAILED"
             instance.last_error = "; ".join(errors)
@@ -177,23 +203,29 @@ class Supervisor:
         if profile.chat_template and profile.chat_template.exists():
             cmd.extend(["--chat-template", str(profile.chat_template)])
 
-        # Check port conflict
+        # Check port conflict — probe only, do not bind (TOCTOU avoidance)
         import socket
 
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                s.bind((profile.host, profile.port))
-        except OSError as e:
+                s.connect((profile.host, profile.port))
+            # If connect succeeds, port is in use
             instance = InstanceRecord(profile=profile.alias)
             instance.state = "FAILED"
-            instance.last_error = f"Port {profile.port} is in use: {e}"
+            instance.last_error = f"Port {profile.port} is already in use"
             self.logger.error("launch_port_conflict", profile=profile.alias,
-                              port=profile.port, error=str(e))
+                              port=profile.port)
             self.save_instance(instance)
             return instance
+        except ConnectionRefusedError:
+            # Port is free — proceed
+            pass
+        except OSError:
+            # Network unreachable or other OS error; proceed to let backend report
+            pass
 
-        # Spawn
+        # Spawn — stdout/stderr go to log file, not PIPE (avoids blocking)
         instance = InstanceRecord(
             profile=profile.alias,
             port=profile.port,
@@ -201,11 +233,17 @@ class Supervisor:
         )
 
         try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            if foreground:
+                proc = subprocess.Popen(cmd)
+            else:
+                backend_log = self.logger.log_dir / f"backend-{profile.alias}.log"
+                with open(backend_log, "w") as log_file:
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdout=log_file,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                    )
             instance.pid = proc.pid
             instance.start_time = self._read_proc_stat(proc.pid)
             self.logger.info("launch_spawned", profile=profile.alias, pid=proc.pid)
@@ -303,7 +341,11 @@ class Supervisor:
 
         # If marked READY/STARTING but process gone, transition to STOPPED
         if instance.state in ("READY", "STARTING") and instance.pid:
-            if not self._verify_process(instance.pid, instance.start_time or 0):
+            if instance.start_time is None:
+                # No start_time recorded — cannot verify, treat as dead
+                instance.state = "STOPPED"
+                self.save_instance(instance)
+            elif not self._verify_process(instance.pid, instance.start_time):
                 instance.state = "STOPPED"
                 self.save_instance(instance)
 

@@ -122,6 +122,14 @@ def validate_profile(profile: ProfileSpec) -> list[str]:
         errors.append(f"weights file not found: {profile.weights_path}")
     elif not profile.weights_path.is_file():
         errors.append(f"weights path is not a file: {profile.weights_path}")
+    else:
+        # Reject symlink escapes from managed asset paths
+        try:
+            real = profile.weights_path.resolve()
+            if profile.weights_path.parent.resolve() not in real.parents:
+                errors.append(f"weights path is a symlink escape: {profile.weights_path}")
+        except OSError:
+            pass
 
     if not profile.backend_binary.exists():
         errors.append(f"backend binary not found: {profile.backend_binary}")

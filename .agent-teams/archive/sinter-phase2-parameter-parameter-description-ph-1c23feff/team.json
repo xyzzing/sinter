@@ -1,0 +1,41 @@
+{
+  "name": "sinter-phase2</parameter>\n<parameter=description>\nPhase 2 of Sinter: agent handover, overnight execution, and PRD-compliant build. Analyzes existing docs, plans remaining work, and implements it.</parameter>\n<parameter=approval>\nrequired",
+  "id": "sinter-phase2-parameter-parameter-description-ph-1c23feff",
+  "captainSessionId": "session-544eacb3-da0e-41da-aa8c-48b17733743a",
+  "createdAt": 1789634579341,
+  "members": [
+    {
+      "id": "",
+      "name": "reviewer-security</parameter>\n<parameter=role>\nsecurity reviewer</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=agent_teams_add_member>\n<parameter=name>\nreviewer-lifecycle</parameter>\n<parameter=role>\nlifecycle reviewer</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=agent_teams_add_member>\n<parameter=name>\nreviewer-validation</parameter>\n<parameter=role>\nvalidation reviewer</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=agent_teams_add_member>\n<parameter=name>\nreviewer-tests</parameter>\n<parameter=role>\ntest coverage reviewer</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=agent_teams_add_member>\n<parameter=name>\nrepair-engineer</parameter>\n<parameter=role>\nimplementation engineer</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=agent_teams_add_member>\n<parameter=name>\ndocs-engineer</parameter>\n<parameter=role>\ndocumentation engineer</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=agent_teams_create_task>\n<parameter=subject>\nT06: Adversarial security review</parameter>\n<parameter=description>\nReview lock.py, state.py, config.py, logging.py for security issues: file permissions, credential exposure, symlink attacks, race conditions. Report findings with severity and file/line.",
+      "provider": "local",
+      "model": "qwen27b-fusion",
+      "executionPrompt": "Read each file, identify security flaws, report as findings.</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=agent_teams_create_task>\n<parameter=subject>\nT06: Adversarial lifecycle review</parameter>\n<parameter=description>\nReview supervisor.py for lifecycle robustness: signal handling, PID verification, timeout logic, orphan process risk, state transitions. Report findings.",
+      "joinedAt": 1789636309911,
+      "status": "removed"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "subject": "T06: Adversarial validation review</parameter>\n<parameter=description>\nReview gguf.py, memory.py, config.py schema for correctness: boundary conditions, error handling, admission formula edge cases. Report findings.",
+      "status": "pending",
+      "dependencies": [],
+      "attempt": 3,
+      "createdAt": 1789636309916,
+      "updatedAt": 1789636316250,
+      "kind": "work",
+      "reassigning": false
+    },
+    {
+      "id": "t2",
+      "subject": "T06: Test coverage gap analysis</parameter>\n<parameter=description>\nAnalyze tests/ for gaps vs PRD requirements and code paths. Identify untested edge cases, missing hardware failure scenarios, race conditions not covered. Report as actionable findings.",
+      "status": "pending",
+      "dependencies": [],
+      "attempt": 0,
+      "createdAt": 1789636309927,
+      "updatedAt": 1789636309927,
+      "kind": "work"
+    }
+  ],
+  "taskSeq": 2
+}

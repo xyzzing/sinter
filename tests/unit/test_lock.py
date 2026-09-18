@@ -23,7 +23,7 @@ def test_lock_is_exclusive():
     with tempfile.TemporaryDirectory() as tmpdir:
         with acquire_lock(Path(tmpdir)):
             try:
-                acquire_lock(Path(tmpdir)).__enter__()
+                acquire_lock(Path(tmpdir), timeout=0.1).__enter__()
                 assert False, "Should have failed to acquire"
-            except FileExistsError:
-                pass  # Expected
+            except TimeoutError:
+                pass  # Expected: lock is held by first context manager

@@ -85,25 +85,56 @@ def cmd_validate(args: argparse.Namespace) -> int:
     """Validate a profile specification without loading weights."""
     config = load_config()
     if args.profile not in config.profiles:
-        print(f"Error: profile '{args.profile}' not found in configuration")
-        print(f"Available profiles: {', '.join(config.profiles.keys())}")
+        result = {
+            "profile": args.profile,
+            "valid": False,
+            "errors": ["Profile not found in configuration"],
+        }
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"Error: profile '{args.profile}' not found in configuration")
+            print(f"Available profiles: {', '.join(config.profiles.keys())}")
         return 1
 
     profile = config.profiles[args.profile]
     errors = validate_profile(profile)
 
     if errors:
-        print(f"Validation FAILED for profile '{args.profile}':")
-        for err in errors:
-            print(f"  - {err}")
+        result = {
+            "profile": args.profile,
+            "valid": False,
+            "errors": errors,
+        }
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"Validation FAILED for profile '{args.profile}':")
+            for err in errors:
+                print(f"  - {err}")
         return 1
     else:
-        print(f"Validation PASSED for profile '{args.profile}'")
-        print(f"  Weights: {profile.weights_path}")
-        print(f"  Backend: {profile.backend_binary}")
-        print(f"  Device: {profile.device}")
-        print(f"  GPU layers: {profile.n_gpu_layers}")
-        print(f"  Context: {profile.ctx_size}")
+        result = {
+            "profile": args.profile,
+            "valid": True,
+            "details": {
+                "weights": str(profile.weights_path),
+                "backend": str(profile.backend_binary),
+                "device": profile.device,
+                "context": profile.ctx_size,
+                "gpu_layers": profile.n_gpu_layers,
+                "port": profile.port,
+            },
+        }
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"Validation PASSED for profile '{args.profile}'")
+            print(f"  Weights: {profile.weights_path}")
+            print(f"  Backend: {profile.backend_binary}")
+            print(f"  Device: {profile.device}")
+            print(f"  GPU layers: {profile.n_gpu_layers}")
+            print(f"  Context: {profile.ctx_size}")
         return 0
 
 
@@ -136,9 +167,9 @@ def cmd_plan(args: argparse.Namespace) -> int:
                             "total_bytes": meta.get("size", 0),
                             "arch": "llama",
                             "params": meta.get("n_params", 0),
-                            "n_layers": 0,
-                            "n_heads": 0,
-                            "n_kv_heads": 0,
+                            "n_layers": meta.get("n_layers", 0),
+                            "n_heads": meta.get("n_heads", 0),
+                            "n_kv_heads": meta.get("n_kv_heads", 0),
                             "embedding_dim": meta.get("n_embd", 0),
                             "context_length": meta.get("n_ctx", 0),
                             "errors": [],
@@ -152,9 +183,9 @@ def cmd_plan(args: argparse.Namespace) -> int:
                                 "total_bytes": details.get("size", 0),
                                 "arch": details.get("family", ""),
                                 "params": details.get("n_params", 0),
-                                "n_layers": 0,
-                                "n_heads": 0,
-                                "n_kv_heads": 0,
+                                "n_layers": details.get("n_layers", 0),
+                                "n_heads": details.get("n_heads", 0),
+                                "n_kv_heads": details.get("n_kv_heads", 0),
                                 "embedding_dim": details.get("n_embd", 0),
                                 "context_length": details.get("n_ctx", 0),
                                 "errors": [],
@@ -282,7 +313,7 @@ def cmd_up(args: argparse.Namespace) -> int:
                 return 0
 
             print(f"Launching profile '{profile.alias}'...")
-            instance = sup.launch(profile, timeout=args.timeout)
+            instance = sup.launch(profile, timeout=args.timeout, foreground=args.foreground)
 
             if instance.state == "READY":
                 print(f"Backend READY (instance {instance.instance_uuid}, PID {instance.pid})")
@@ -366,6 +397,7 @@ def main(argv: list[str] | None = None) -> int:
     # validate
     p_validate = subparsers.add_parser("validate", help="Validate a profile specification")
     p_validate.add_argument("profile", help="Profile alias to validate")
+    p_validate.add_argument("--json", action="store_true", help="Output as JSON")
     p_validate.set_defaults(func=cmd_validate)
 
     # plan
@@ -378,6 +410,8 @@ def main(argv: list[str] | None = None) -> int:
     p_up = subparsers.add_parser("up", help="Start llama-server for a profile")
     p_up.add_argument("profile", help="Profile alias to start")
     p_up.add_argument("--timeout", type=float, default=30.0, help="Readiness timeout (seconds)")
+    p_up.add_argument("--foreground", "-F", action="store_true",
+                      help="Run in foreground; attach backend output to terminal")
     p_up.set_defaults(func=cmd_up)
 
     # down
