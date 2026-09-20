@@ -14,6 +14,13 @@ from sinter.gguf import read_gguf_header
 from sinter.hardware import probe
 from sinter.lock import acquire_lock
 from sinter.memory import check_admission
+from sinter.ramdisk import (
+    format_ramdisk_info,
+    list_models_on_ramdisk,
+    probe_ramdisk,
+    remove_from_ramdisk,
+    transfer_to_ramdisk,
+)
 from sinter.sandbox import run_sandboxed
 from sinter.sensors import probe_sensors
 from sinter.setup import run_setup_wizard
@@ -49,6 +56,19 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             "error": str(e),
         }
 
+    # Probe RAM disk
+    ramdisk_info = None
+    if config.ramdisk.enabled and config.ramdisk.path:
+        try:
+            from pathlib import Path as P
+            ramdisk_info = probe_ramdisk(
+                P(config.ramdisk.path),
+                warn_pct=config.ramdisk.warn_used_pct,
+                critical_pct=config.ramdisk.critical_used_pct,
+            )
+        except Exception:
+            pass
+
     result = {
         "sinter_version": __version__,
         "os": info.os_release,
@@ -78,6 +98,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             "version": info.llama_server_version,
             "features": backend_features.to_dict() if backend_features else None,
         },
+        "ramdisk": ramdisk_info.to_dict() if ramdisk_info else None,
         "errors": info.errors,
     }
 
@@ -126,6 +147,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print(format_backend_info(backend_features))
         elif info.llama_server_version:
             print(f"  llama-server version: {info.llama_server_version}")
+
+        # RAM disk info
+        if ramdisk_info:
+            print()
+            print(format_ramdisk_info(ramdisk_info))
 
         if info.errors:
             print("  Errors:")
@@ -458,6 +484,19 @@ def cmd_status(args: argparse.Namespace) -> int:
         except (OSError, json.JSONDecodeError):
             pass
 
+    # Add RAM disk info if enabled
+    if config.ramdisk.enabled and config.ramdisk.path:
+        try:
+            from pathlib import Path as P
+            ramdisk_info = probe_ramdisk(
+                P(config.ramdisk.path),
+                warn_pct=config.ramdisk.warn_used_pct,
+                critical_pct=config.ramdisk.critical_used_pct,
+            )
+            result["ramdisk"] = ramdisk_info.to_dict()
+        except Exception:
+            pass
+
     if args.json:
         print(json.dumps(result, indent=2))
     else:
@@ -487,6 +526,22 @@ def cmd_status(args: argparse.Namespace) -> int:
                 print(f"  Power: {tel['power_w']:.1f} W")
             if tel.get("missing"):
                 print(f"  Missing sensors: {', '.join(tel['missing'])}")
+
+        # Print RAM disk info
+        if "ramdisk" in result:
+            rd = result["ramdisk"]
+            if rd.get("exists"):
+                if rd.get("used_gb") is not None and rd.get("total_gb") is not None:
+                    used = rd["used_gb"]
+                    total = rd["total_gb"]
+                    pct = rd.get("used_pct", 0)
+                    print(f"  RAM disk: {used} GB / {total} GB ({pct:.1f}%)")
+                    print(f"    Quality: {rd.get('quality', 'unknown')}")
+                    if rd.get("models"):
+                        print(f"    Models: {len(rd['models'])}")
+            else:
+                errors = rd.get("errors", [])
+                print(f"  RAM disk: unavailable ({', '.join(errors)})")
 
     return 0
 
@@ -707,6 +762,109 @@ def cmd_telemetry(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ramdisk_status(args: argparse.Namespace) -> int:
+    """Show RAM disk status."""
+    config = load_config()
+
+    if not config.ramdisk.path:
+        print("Error: RAM disk path not configured")
+        return 1
+
+    from pathlib import Path as P
+    ramdisk_info = probe_ramdisk(
+        P(config.ramdisk.path),
+        warn_pct=config.ramdisk.warn_used_pct,
+        critical_pct=config.ramdisk.critical_used_pct,
+    )
+
+    if args.json:
+        print(json.dumps(ramdisk_info.to_dict(), indent=2))
+    else:
+        print(format_ramdisk_info(ramdisk_info))
+
+    return 0
+
+
+def cmd_ramdisk_list(args: argparse.Namespace) -> int:
+    """List models on RAM disk."""
+    config = load_config()
+
+    if not config.ramdisk.path:
+        print("Error: RAM disk path not configured")
+        return 1
+
+    from pathlib import Path as P
+    models = list_models_on_ramdisk(P(config.ramdisk.path))
+
+    if args.json:
+        print(json.dumps({"models": models}, indent=2))
+    else:
+        if models:
+            print(f"Models on RAM disk ({len(models)}):")
+            for model in models:
+                print(f"  - {model}")
+        else:
+            print("No models on RAM disk")
+
+    return 0
+
+
+def cmd_ramdisk_up(args: argparse.Namespace) -> int:
+    """Copy model to RAM disk."""
+    config = load_config()
+
+    if args.profile not in config.profiles:
+        print(f"Error: profile '{args.profile}' not found")
+        return 1
+
+    profile = config.profiles[args.profile]
+
+    if not config.ramdisk.path:
+        print("Error: RAM disk path not configured")
+        return 1
+
+    from pathlib import Path as P
+    try:
+        dest = transfer_to_ramdisk(
+            profile.weights_path,
+            P(config.ramdisk.path),
+        )
+        print(f"Model copied to RAM disk: {dest}")
+        return 0
+    except (FileNotFoundError, ValueError, OSError) as e:
+        print(f"Error: {e}")
+        return 1
+
+
+def cmd_ramdisk_down(args: argparse.Namespace) -> int:
+    """Remove model from RAM disk."""
+    config = load_config()
+
+    if args.profile not in config.profiles:
+        print(f"Error: profile '{args.profile}' not found")
+        return 1
+
+    profile = config.profiles[args.profile]
+
+    if not config.ramdisk.path:
+        print("Error: RAM disk path not configured")
+        return 1
+
+    from pathlib import Path as P
+    ramdisk_path = P(config.ramdisk.path) / profile.weights_path.name
+
+    try:
+        if ramdisk_path.exists():
+            remove_from_ramdisk(ramdisk_path)
+            print(f"Model removed from RAM disk: {ramdisk_path}")
+        else:
+            print(f"Model not found on RAM disk: {ramdisk_path}")
+        return 0
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        return 1
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     """Run interactive setup wizard."""
     return run_setup_wizard()
@@ -832,6 +990,26 @@ def main(argv: list[str] | None = None) -> int:
     # setup
     p_setup = subparsers.add_parser("setup", help="Interactive setup wizard")
     p_setup.set_defaults(func=cmd_setup)
+
+    # ramdisk
+    p_ramdisk = subparsers.add_parser("ramdisk", help="RAM disk management")
+    ramdisk_subparsers = p_ramdisk.add_subparsers(dest="ramdisk_command", required=True)
+
+    p_rd_status = ramdisk_subparsers.add_parser("status", help="Show RAM disk status")
+    p_rd_status.add_argument("--json", action="store_true", help="Output as JSON")
+    p_rd_status.set_defaults(func=cmd_ramdisk_status)
+
+    p_rd_list = ramdisk_subparsers.add_parser("list", help="List models on RAM disk")
+    p_rd_list.add_argument("--json", action="store_true", help="Output as JSON")
+    p_rd_list.set_defaults(func=cmd_ramdisk_list)
+
+    p_rd_up = ramdisk_subparsers.add_parser("up", help="Copy model to RAM disk")
+    p_rd_up.add_argument("profile", help="Profile alias")
+    p_rd_up.set_defaults(func=cmd_ramdisk_up)
+
+    p_rd_down = ramdisk_subparsers.add_parser("down", help="Remove model from RAM disk")
+    p_rd_down.add_argument("profile", help="Profile alias")
+    p_rd_down.set_defaults(func=cmd_ramdisk_down)
 
     args = parser.parse_args(argv)
     return args.func(args)

@@ -70,8 +70,50 @@ sinter status
 - **Not automatic**: Default policy is advisory; auto-stop is opt-in
 - **Not a benchmark**: Compass handles benchmarking separately
 
-## Data Storage
+## RAM Disk Management
 
-- `$XDG_STATE_HOME/sinter/telemetry/current.json` — latest sample (atomic)
-- `$XDG_STATE_HOME/sinter/telemetry/sessions/<uuid>.json` — session summaries
-- `$XDG_STATE_HOME/sinter/telemetry/samples/<uuid>.jsonl` — raw samples (14-day retention)
+Sinter supports moving LLM model weights to a RAM disk (tmpfs) for faster loading by llama-server.
+
+### Configuration
+
+Add to `~/.config/sinter/config.toml`:
+
+```toml
+[ramdisk]
+path = "/mnt/ai_ramdisk"
+enabled = true
+warn_used_pct = 80
+critical_used_pct = 90
+```
+
+Or use environment variable: `SINTER_RAMDISK_PATH=/mnt/ai_ramdisk`
+
+### CLI Commands
+
+```bash
+# Show RAM disk status
+sinter ramdisk status
+
+# List models on RAM disk
+sinter ramdisk list
+
+# Copy model to RAM disk
+sinter ramdisk up coding
+
+# Remove model from RAM disk
+sinter ramdisk down coding
+```
+
+### How It Works
+
+1. Model weights are copied from persistent storage to the RAM disk
+2. llama-server loads the model from the RAM disk (faster I/O)
+3. When done, models can be removed from the RAM disk to free space
+
+### Monitoring
+
+RAM disk status is included in `sinter doctor` and `sinter status` output, showing:
+- Total size, used space, available space
+- Usage percentage
+- Quality assessment (ok/degraded/unavailable)
+- List of models currently on the RAM disk

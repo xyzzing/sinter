@@ -17,6 +17,7 @@ Sinter manages `llama-server` processes with deterministic lifecycle control, co
 - **Hardware probing**: Read-only capability detection (`sinter doctor`)
 - **Context benchmarking**: Find optimal context sizes (`sinter bench`)
 - **Backend updates**: Version management and feature detection (`sinter update`)
+- **RAM disk management**: Fast model loading via tmpfs (`sinter ramdisk`)
 - **Loopback isolation**: Backend binds to 127.0.0.1 by default
 
 ## Installation
@@ -106,6 +107,10 @@ See [docs/configuration.md](docs/configuration.md) for complete configuration re
 | `sinter telemetry --session` | Last session summary |
 | `sinter bench <profile>` | Benchmark performance |
 | `sinter update --backend` | Update llama.cpp backend |
+| `sinter ramdisk status` | Show RAM disk status |
+| `sinter ramdisk list` | List models on RAM disk |
+| `sinter ramdisk up <profile>` | Copy model to RAM disk |
+| `sinter ramdisk down <profile>` | Remove model from RAM disk |
 | `sinter exec --sandbox <cmd>` | Run command in sandbox |
 
 All commands support `--json` for structured output.

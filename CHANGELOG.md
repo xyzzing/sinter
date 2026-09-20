@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **RAM disk management** — copy models to/from tmpfs for fast loading
+  - `sinter ramdisk status` — show RAM disk usage and quality
+  - `sinter ramdisk list` — list models on RAM disk
+  - `sinter ramdisk up <profile>` — copy model to RAM disk
+  - `sinter ramdisk down <profile>` — remove model from RAM disk
+  - Configurable via `[ramdisk]` section in config.toml
+  - Supports `SINTER_RAMDISK_PATH` environment variable override
 - **Sentinel telemetry** — session-scoped temperature, power, energy monitoring
 - Energy measurement tiers (wall-meter, hwmon counter, power integration, assumed)
 - Optional electricity cost and CO₂e estimates via `[accounting]` config

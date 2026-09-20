@@ -81,6 +81,15 @@ class AccountingConfig:
 
 
 @dataclass
+class RamdiskConfig:
+    """RAM disk configuration for model storage."""
+    path: Optional[str] = "/mnt/ai_ramdisk"
+    enabled: bool = True
+    warn_used_pct: float = 80.0
+    critical_used_pct: float = 90.0
+
+
+@dataclass
 class SinterConfig:
     """Top-level SINTER configuration."""
     profiles: dict[str, ProfileSpec] = field(default_factory=dict)
@@ -92,6 +101,7 @@ class SinterConfig:
     cache_dir: Path = DEFAULT_CACHE_DIR
     sentinel: SentinelConfig = field(default_factory=SentinelConfig)
     accounting: AccountingConfig = field(default_factory=AccountingConfig)
+    ramdisk: RamdiskConfig = field(default_factory=RamdiskConfig)
 
 
 def load_config(config_path: Optional[Path] = None) -> SinterConfig:
@@ -192,6 +202,24 @@ def load_config(config_path: Optional[Path] = None) -> SinterConfig:
                 accounting_raw.get("allow_assumed_power", a.allow_assumed_power)
             ),
         )
+
+    # Parse ramdisk configuration
+    ramdisk_raw = raw.get("ramdisk", {})
+    if ramdisk_raw:
+        r = config.ramdisk
+        config.ramdisk = RamdiskConfig(
+            path=ramdisk_raw.get("path", r.path),
+            enabled=bool(ramdisk_raw.get("enabled", r.enabled)),
+            warn_used_pct=float(ramdisk_raw.get("warn_used_pct", r.warn_used_pct)),
+            critical_used_pct=float(
+                ramdisk_raw.get("critical_used_pct", r.critical_used_pct)
+            ),
+        )
+
+    # Support SINTER_RAMDISK_PATH environment variable override
+    env_ramdisk = os.environ.get("SINTER_RAMDISK_PATH")
+    if env_ramdisk:
+        config.ramdisk.path = env_ramdisk
 
     return config
 
