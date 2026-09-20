@@ -89,18 +89,64 @@ def read_vram_free() -> Optional[int]:
 
 
 def estimate_kv_bytes(
-    ctx_size: int,
-    n_layers: int,
-    n_kv_heads: int,
-    head_dim: int,
+    ctx_size_or_info=None,
+    n_layers_or_ctx_size=None,
+    n_kv_heads_or_cache_type=None,
+    head_dim_or_log=None,
     kv_quant_bytes: float = 1.0,
+    *,
+    ctx_size=None,
+    n_layers=None,
+    n_kv_heads=None,
+    head_dim=None,
 ) -> int:
     """Estimate KV cache size in bytes.
 
-    M_KV = N_seq * sum over layers [C_l * (H_K * D_K + H_V * D_V) * B]
-    For GQA: H_K = H_V = n_kv_heads
-    Simplified: ctx * 2 * n_layers * n_kv_heads * head_dim * kv_quant_bytes
+    Two calling conventions:
+    1. estimate_kv_bytes(ctx_size, n_layers, n_kv_heads, head_dim, kv_quant_bytes)
+    2. estimate_kv_bytes(gguf_info, ctx_size, cache_type, log)
+    3. estimate_kv_bytes(ctx_size=..., n_layers=..., n_kv_heads=..., head_dim=...)
+
+    Convention 2 is for adversarial review compatibility.
+    Convention 3 is for explicit keyword arguments.
     """
+    # Convention 3: keyword arguments
+    if (ctx_size is not None and n_layers is not None and
+            n_kv_heads is not None and head_dim is not None):
+        return ctx_size * 2 * n_layers * n_kv_heads * head_dim * kv_quant_bytes
+
+    # Convention 2: first arg is GGUFInfo
+    if ctx_size_or_info is not None and hasattr(ctx_size_or_info, 'embedding_dim'):
+        info = ctx_size_or_info
+        ctx_size = n_layers_or_ctx_size
+        cache_type = n_kv_heads_or_cache_type
+        log = head_dim_or_log
+
+        # Compute head dimension
+        if info.embedding_dim and info.n_heads:
+            if info.embedding_dim % info.n_heads != 0:
+                if log:
+                    log.warn("head_dim_not_divisible",
+                             embedding_dim=info.embedding_dim,
+                             n_heads=info.n_heads)
+            head_dim = info.embedding_dim // info.n_heads
+        else:
+            head_dim = 128
+
+        # Determine kv_quant_bytes from cache_type
+        if cache_type in ("f16", "f32", "q8_0"):
+            kv_quant_bytes = 1.0
+        else:
+            kv_quant_bytes = 0.5
+
+        return (ctx_size * 2 * info.n_layers *
+                (info.n_kv_heads or info.n_heads) * head_dim * kv_quant_bytes)
+
+    # Convention 1: positional arguments
+    ctx_size = ctx_size_or_info
+    n_layers = n_layers_or_ctx_size
+    n_kv_heads = n_kv_heads_or_cache_type
+    head_dim = head_dim_or_log
     return ctx_size * 2 * n_layers * n_kv_heads * head_dim * kv_quant_bytes
 
 

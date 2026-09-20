@@ -28,6 +28,8 @@ class InstanceRecord:
     state: str = "STOPPED"  # STOPPED, VALIDATING, STARTING, READY, STOPPING, FAILED, DEGRADED
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     last_error: Optional[str] = None
+    weights_path: Optional[str] = None
+    host: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -50,13 +52,13 @@ class Supervisor:
     """Manages llama-server lifecycle with state machine."""
 
     def __init__(
-        self, runtime_dir: Path, state_dir: Path, log_dir: Optional[Path] = None
+        self, state_dir: Path, logger: OperationalLogger, runtime_dir: Optional[Path] = None
     ):
-        self.runtime_dir = runtime_dir
         self.state_dir = state_dir
-        if log_dir is None:
-            log_dir = state_dir / "logs"
-        self.logger = OperationalLogger(log_dir)
+        self.logger = logger
+        if runtime_dir is None:
+            runtime_dir = state_dir / "runtime"
+        self.runtime_dir = runtime_dir
 
     def _read_proc_stat(self, pid: int) -> Optional[int]:
         """Read start_time from /proc/[pid]/stat. Returns None if process gone.
@@ -85,10 +87,30 @@ class Supervisor:
         except (FileNotFoundError, OSError, IndexError, ValueError):
             return None
 
-    def _verify_process(self, pid: int, expected_start_time: int) -> bool:
-        """Verify a PID is still our process (not PID-wrapped)."""
+    def _verify_process(self, pid: int, expected_start_time: int,
+                        expected_uuid: Optional[str] = None) -> bool:
+        """Verify a PID is still our process (not PID-wrapped).
+
+        If expected_uuid is provided, also verify the process environment
+        contains the matching instance UUID via /proc/[pid]/environ.
+        """
         actual_start = self._read_proc_stat(pid)
-        return actual_start is not None and actual_start == expected_start_time
+        if actual_start is None or actual_start != expected_start_time:
+            return False
+
+        # UUID verification: check process environment for our instance marker
+        if expected_uuid is not None:
+            try:
+                with open(f"/proc/{pid}/environ", "rb") as f:
+                    environ = f.read()
+                # environ is null-separated key=value pairs
+                marker = f"__SINTER_INSTANCE={expected_uuid}".encode()
+                if marker not in environ:
+                    return False
+            except (FileNotFoundError, OSError):
+                return False
+
+        return True
 
     def _send_signal(self, pid: int, sig: int) -> bool:
         """Send signal to process. Returns False if process gone.
@@ -169,6 +191,20 @@ class Supervisor:
         self.logger.info("launch_start", profile=profile.alias, ctx_size=profile.ctx_size,
                          port=profile.port)
 
+        # Check for existing DEGRADED instance — blocks new launches
+        existing = self.get_instance()
+        if existing and existing.state == "DEGRADED":
+            instance = InstanceRecord(profile=profile.alias)
+            instance.state = "FAILED"
+            instance.last_error = (
+                f"Previous instance is DEGRADED (PID {existing.pid}). "
+                "Resolve ownership before launching."
+            )
+            self.logger.error("launch_blocked_degraded", profile=profile.alias,
+                              existing_pid=existing.pid)
+            self.save_instance(instance)
+            return instance
+
         # Validate first
         from sinter.config import validate_profile
 
@@ -232,9 +268,13 @@ class Supervisor:
             state="STARTING",
         )
 
+        # Add instance UUID marker to environment for verification
+        env = os.environ.copy()
+        env["__SINTER_INSTANCE"] = instance.instance_uuid
+
         try:
             if foreground:
-                proc = subprocess.Popen(cmd)
+                proc = subprocess.Popen(cmd, env=env)
             else:
                 backend_log = self.logger.log_dir / f"backend-{profile.alias}.log"
                 with open(backend_log, "w") as log_file:
@@ -243,6 +283,7 @@ class Supervisor:
                         stdout=log_file,
                         stderr=subprocess.STDOUT,
                         start_new_session=True,
+                        env=env,
                     )
             instance.pid = proc.pid
             instance.start_time = self._read_proc_stat(proc.pid)
@@ -301,9 +342,10 @@ class Supervisor:
         self.logger.info("stop_starting", profile=instance.profile, pid=instance.pid)
         self.save_instance(instance)
 
-        # Verify process is still ours
-        if not self._verify_process(instance.pid, instance.start_time or 0):
-            # Process already gone
+        # Verify process is still ours (PID + start_time + instance_uuid)
+        if not self._verify_process(instance.pid, instance.start_time or 0,
+                                    instance.instance_uuid):
+            # Process already gone or PID reused
             instance.state = "STOPPED"
             self.save_instance(instance)
             return instance
@@ -345,7 +387,8 @@ class Supervisor:
                 # No start_time recorded — cannot verify, treat as dead
                 instance.state = "STOPPED"
                 self.save_instance(instance)
-            elif not self._verify_process(instance.pid, instance.start_time):
+            elif not self._verify_process(instance.pid, instance.start_time,
+                                         instance.instance_uuid):
                 instance.state = "STOPPED"
                 self.save_instance(instance)
 

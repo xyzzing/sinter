@@ -7,17 +7,31 @@ import json
 import sys
 
 from sinter import __version__
+from sinter.backend import detect_features, format_backend_info
+from sinter.bench import bench_profile, format_bench_output
 from sinter.config import load_config, validate_profile
 from sinter.gguf import read_gguf_header
 from sinter.hardware import probe
 from sinter.lock import acquire_lock
 from sinter.memory import check_admission
+from sinter.sandbox import run_sandboxed
+from sinter.setup import run_setup_wizard
 from sinter.supervisor import Supervisor
+from sinter.update import format_update_result, update_backend
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Read-only hardware/backend capability report."""
     info = probe()
+
+    # Detect backend features
+    config = load_config()
+    backend_features = None
+    if config.profiles:
+        # Use the first profile's backend binary for feature detection
+        first_profile = next(iter(config.profiles.values()))
+        backend_features = detect_features(first_profile.backend_binary)
+
     result = {
         "sinter_version": __version__,
         "os": info.os_release,
@@ -44,6 +58,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             "running": info.llama_server_running,
             "port": info.llama_server_port,
             "version": info.llama_server_version,
+            "features": backend_features.to_dict() if backend_features else None,
         },
         "errors": info.errors,
     }
@@ -69,8 +84,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print(f"  llama-server: running on port {info.llama_server_port}")
         else:
             print("  llama-server: not running")
-        if info.llama_server_version:
+
+        if backend_features:
+            print()
+            print(format_backend_info(backend_features))
+        elif info.llama_server_version:
             print(f"  llama-server version: {info.llama_server_version}")
+
         if info.errors:
             print("  Errors:")
             for err in info.errors:
@@ -100,11 +120,34 @@ def cmd_validate(args: argparse.Namespace) -> int:
     profile = config.profiles[args.profile]
     errors = validate_profile(profile)
 
+    # Check backend feature compatibility
+    warnings = []
+    features = detect_features(profile.backend_binary)
+
+    if profile.flash_attn and features.flash_attn is False:
+        warnings.append(
+            "Profile uses flash_attn but binary doesn't support it. "
+            "Run 'sinter update --backend' to improve performance."
+        )
+
+    if profile.cache_type_k not in features.cache_types and features.cache_types:
+        warnings.append(
+            f"Profile uses cache_type_k={profile.cache_type_k} but binary may not support it. "
+            f"Supported: {', '.join(features.cache_types)}"
+        )
+
+    if profile.cache_type_v not in features.cache_types and features.cache_types:
+        warnings.append(
+            f"Profile uses cache_type_v={profile.cache_type_v} but binary may not support it. "
+            f"Supported: {', '.join(features.cache_types)}"
+        )
+
     if errors:
         result = {
             "profile": args.profile,
             "valid": False,
             "errors": errors,
+            "warnings": warnings,
         }
         if args.json:
             print(json.dumps(result, indent=2))
@@ -112,6 +155,10 @@ def cmd_validate(args: argparse.Namespace) -> int:
             print(f"Validation FAILED for profile '{args.profile}':")
             for err in errors:
                 print(f"  - {err}")
+            if warnings:
+                print("  Warnings:")
+                for warn in warnings:
+                    print(f"  - {warn}")
         return 1
     else:
         result = {
@@ -125,6 +172,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 "gpu_layers": profile.n_gpu_layers,
                 "port": profile.port,
             },
+            "warnings": warnings,
         }
         if args.json:
             print(json.dumps(result, indent=2))
@@ -135,6 +183,10 @@ def cmd_validate(args: argparse.Namespace) -> int:
             print(f"  Device: {profile.device}")
             print(f"  GPU layers: {profile.n_gpu_layers}")
             print(f"  Context: {profile.ctx_size}")
+            if warnings:
+                print("  Warnings:")
+                for warn in warnings:
+                    print(f"  - {warn}")
         return 0
 
 
@@ -380,6 +432,121 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_exec(args: argparse.Namespace) -> int:
+    """Execute a command in a sandboxed environment."""
+    if not args.sandbox:
+        print("Error: --sandbox is required for sinter exec")
+        return 1
+
+    result = run_sandboxed(
+        command=args.command,
+        timeout=args.timeout,
+        max_memory_mb=args.max_memory_mb,
+        cpu_time_seconds=args.cpu_time_seconds,
+    )
+
+    if args.json:
+        output = {
+            "exit_code": result.exit_code,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "timed_out": result.timed_out,
+            "killed": result.killed,
+            "elapsed_seconds": result.elapsed_seconds,
+        }
+        print(json.dumps(output, indent=2))
+    else:
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
+        if result.timed_out:
+            print(f"\n[timeout after {args.timeout}s]", file=sys.stderr)
+        if result.killed:
+            print("\n[killed]", file=sys.stderr)
+
+    return result.exit_code
+
+
+def cmd_bench(args: argparse.Namespace) -> int:
+    """Benchmark a profile for performance and context size."""
+    config = load_config()
+    if args.profile not in config.profiles:
+        print(f"Error: profile '{args.profile}' not found in configuration")
+        print(f"Available profiles: {', '.join(config.profiles.keys())}")
+        return 1
+
+    profile = config.profiles[args.profile]
+
+    # Parse context sizes if specified
+    context_sizes = None
+    if args.context_sizes:
+        try:
+            context_sizes = [int(s) for s in args.context_sizes.split(",")]
+            context_sizes.sort()
+        except ValueError:
+            print(f"Error: invalid context sizes: {args.context_sizes}")
+            return 1
+
+    results = bench_profile(profile, context_sizes)
+
+    if args.json:
+        output = {
+            "baseline": results["baseline"].to_dict(),
+            "context_test": None,
+        }
+        if results.get("context_test"):
+            ct = results["context_test"]
+            output["context_test"] = {
+                "max_working": ct.max_working,
+                "failed_at": ct.failed_at,
+                "failed_reason": ct.failed_reason,
+                "tests": [t.to_dict() for t in ct.tests],
+            }
+        print(json.dumps(output, indent=2))
+    else:
+        print(format_bench_output(results))
+
+    return 0
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    """Update llama.cpp backend."""
+    target_version = None
+    recompile = False
+
+    if args.version:
+        target_version = args.version
+    if args.recompile:
+        recompile = True
+
+    result = update_backend(
+        target_version=target_version,
+        recompile=recompile,
+        verbose=not args.json,
+    )
+
+    if args.json:
+        output = {
+            "success": result.success,
+            "previous_version": result.previous_version,
+            "new_version": result.new_version,
+            "target_version": result.target_version,
+            "build_time_seconds": result.build_time_seconds,
+            "error": result.error,
+        }
+        print(json.dumps(output, indent=2))
+    else:
+        print(format_update_result(result))
+
+    return 0 if result.success else 1
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    """Run interactive setup wizard."""
+    return run_setup_wizard()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="sinter",
@@ -426,6 +593,62 @@ def main(argv: list[str] | None = None) -> int:
     p_status = subparsers.add_parser("status", help="Show current instance status")
     p_status.add_argument("--json", action="store_true", help="Output as JSON")
     p_status.set_defaults(func=cmd_status)
+
+    # exec
+    p_exec = subparsers.add_parser("exec", help="Execute command in sandbox")
+    p_exec.add_argument(
+        "--sandbox", action="store_true", required=True,
+        help="Run in sandboxed environment (required)",
+    )
+    p_exec.add_argument(
+        "--timeout", type=int, default=15,
+        help="Wall-clock timeout in seconds (default: 15)",
+    )
+    p_exec.add_argument(
+        "--max-memory-mb", type=int, default=2048,
+        help="Maximum virtual memory in MB (default: 2048)",
+    )
+    p_exec.add_argument(
+        "--cpu-time-seconds", type=int, default=15,
+        help="Maximum CPU time in seconds (default: 15)",
+    )
+    p_exec.add_argument("--json", action="store_true", help="Output as JSON")
+    p_exec.add_argument("command", nargs=argparse.REMAINDER, help="Command to execute")
+    p_exec.set_defaults(func=cmd_exec)
+
+    # bench
+    p_bench = subparsers.add_parser("bench", help="Benchmark a profile")
+    p_bench.add_argument("profile", help="Profile alias to benchmark")
+    p_bench.add_argument(
+        "--context-sizes",
+        help="Comma-separated list of context sizes to test (e.g. 8192,16384,32768)",
+    )
+    p_bench.add_argument("--json", action="store_true", help="Output as JSON")
+    p_bench.set_defaults(func=cmd_bench)
+
+    # update
+    p_update = subparsers.add_parser("update", help="Update llama.cpp backend")
+    p_update.add_argument(
+        "--backend",
+        action="store_true",
+        help="Update llama.cpp backend",
+    )
+    p_update.add_argument(
+        "version",
+        nargs="?",
+        help="Specific version to update to (default: latest)",
+    )
+    p_update.add_argument(
+        "--recompile",
+        action="store_true",
+        help="Force recompile even if already at target version",
+    )
+    p_update.add_argument("--json", action="store_true", help="Output as JSON")
+    p_update.set_defaults(func=cmd_update)
+
+    # setup
+    p_setup = subparsers.add_parser("setup", help="Interactive setup wizard")
+    p_setup.set_defaults(func=cmd_setup)
 
     args = parser.parse_args(argv)
     return args.func(args)

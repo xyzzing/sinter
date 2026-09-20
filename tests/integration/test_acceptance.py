@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from sinter.config import ProfileSpec
+from sinter.logging import OperationalLogger
 from sinter.supervisor import Supervisor
 
 
@@ -23,9 +24,9 @@ from sinter.supervisor import Supervisor
 def test_full_client_journey():
     """Complete acceptance journey: up → status → down → status."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        runtime = Path(tmpdir) / "runtime"
         state = Path(tmpdir) / "state"
-        sup = Supervisor(runtime, state)
+        log = OperationalLogger(state / "logs")
+        sup = Supervisor(state, log)
 
         # Step 1: Status should be STOPPED
         status = sup.status()
@@ -79,9 +80,9 @@ def test_full_client_journey():
 def test_logging_captures_events():
     """Operational logging captures lifecycle events."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        runtime = Path(tmpdir) / "runtime"
         state = Path(tmpdir) / "state"
-        sup = Supervisor(runtime, state)
+        log = OperationalLogger(state / "logs")
+        sup = Supervisor(state, log)
 
         # Simulate a launch failure (no weights)
         profile = ProfileSpec(

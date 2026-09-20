@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import ipaddress
 import os
 import tomllib
 from dataclasses import dataclass, field
@@ -111,6 +113,54 @@ def load_config(config_path: Optional[Path] = None) -> SinterConfig:
     return config
 
 
+def save_config(config: SinterConfig) -> None:
+    """Save configuration to TOML file."""
+    config_dir = config.config_dir
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_path = config_dir / "config.toml"
+
+    # Build TOML content
+    lines = []
+    lines.append(f"default_profile = \"{config.default_profile}\"")
+    lines.append("")
+
+    for alias, profile in config.profiles.items():
+        lines.append(f"[profiles.{alias}]")
+        lines.append(f"weights_path = \"{profile.weights_path}\"")
+        if profile.weights_digest:
+            lines.append(f"weights_digest = \"{profile.weights_digest}\"")
+        lines.append(f"backend_binary = \"{profile.backend_binary}\"")
+        lines.append(f"n_gpu_layers = {profile.n_gpu_layers}")
+        lines.append(f"ctx_size = {profile.ctx_size}")
+        lines.append(f"cache_type_k = \"{profile.cache_type_k}\"")
+        lines.append(f"cache_type_v = \"{profile.cache_type_v}\"")
+        lines.append(f"flash_attn = {str(profile.flash_attn).lower()}")
+        lines.append(f"batch_size = {profile.batch_size}")
+        lines.append(f"ubatch_size = {profile.ubatch_size}")
+        lines.append(f"threads = {profile.threads}")
+        lines.append(f"n_parallel = {profile.n_parallel}")
+        lines.append(f"port = {profile.port}")
+        lines.append(f"host = \"{profile.host}\"")
+        if profile.chat_template:
+            lines.append(f"chat_template = \"{profile.chat_template}\"")
+        lines.append("")
+
+    with open(config_path, "w") as f:
+        f.write("\n".join(lines))
+
+
+def compute_sha256(path: Path) -> str:
+    """Compute SHA256 hash of a file using bounded chunked reads."""
+    sha256 = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(64 * 1024 * 1024)  # 64 MiB chunks
+            if not chunk:
+                break
+            sha256.update(chunk)
+    return sha256.hexdigest()
+
+
 def validate_profile(profile: ProfileSpec) -> list[str]:
     """Validate a profile spec. Returns list of error strings (empty = valid)."""
     errors = []
@@ -131,6 +181,19 @@ def validate_profile(profile: ProfileSpec) -> list[str]:
         except OSError:
             pass
 
+        # Validate SHA256 hash if specified
+        if profile.weights_digest:
+            try:
+                actual = compute_sha256(profile.weights_path)
+                expected = profile.weights_digest.lower()
+                if actual != expected:
+                    errors.append(
+                        f"weights SHA256 mismatch: expected {expected}, "
+                        f"got {actual}"
+                    )
+            except OSError as e:
+                errors.append(f"failed to compute weights SHA256: {e}")
+
     if not profile.backend_binary.exists():
         errors.append(f"backend binary not found: {profile.backend_binary}")
 
@@ -148,6 +211,16 @@ def validate_profile(profile: ProfileSpec) -> list[str]:
 
     if profile.port < 1 or profile.port > 65535:
         errors.append(f"port must be 1-65535, got {profile.port}")
+
+    # Validate host is loopback
+    try:
+        addr = ipaddress.ip_address(profile.host)
+        if not addr.is_loopback:
+            errors.append(f"host must be loopback, got {profile.host}")
+    except ValueError:
+        # Not an IP address — could be hostname
+        if profile.host not in ("localhost", "127.0.0.1", "::1"):
+            errors.append(f"host must resolve to loopback, got {profile.host}")
 
     # Validate KV cache types
     valid_cache_types = {"f16", "f32", "q4_0", "q4_1", "q5_0", "q5_1", "q8_0"}

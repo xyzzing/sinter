@@ -17,22 +17,25 @@ from sinter.memory import estimate_kv_bytes
 
 def test_supervisor_signal_permission_error():
     """PID wrap/reuse should be detected via PermissionError."""
+    from unittest.mock import patch
+
     from sinter.supervisor import Supervisor
 
     with tempfile.TemporaryDirectory() as tmpdir:
         log = OperationalLogger(Path(tmpdir) / "sinter.log")
         try:
             sup = Supervisor(Path(tmpdir), log)
-            # Send signal to PID 1 (init) — owned by root, should fail
-            result = sup._send_signal(1, 15)
-            assert result is False, "Signal to PID 1 should fail with PermissionError"
+            # Mock os.kill to raise PermissionError (simulates PID reuse)
+            with patch("sinter.supervisor.os.kill", side_effect=PermissionError()):
+                result = sup._send_signal(12345, 15)
+                assert result is False, "Signal should fail with PermissionError"
         finally:
             log.close()
 
 
 def test_supervisor_start_time_none():
     """Instance with start_time=None should be treated as dead."""
-    from sinter.supervisor import Supervisor, InstanceRecord
+    from sinter.supervisor import InstanceRecord, Supervisor
 
     with tempfile.TemporaryDirectory() as tmpdir:
         log = OperationalLogger(Path(tmpdir) / "sinter.log")
@@ -88,20 +91,20 @@ def test_gguf_corrupt_kv_recovery():
         f.write(struct.pack("<Q", 2))  # tensor_count
         f.write(struct.pack("<Q", 3))  # kv_count
         # First KV: valid
-        f.write(struct.pack("<I", 4))  # key length
+        f.write(struct.pack("<Q", 4))  # key length (uint64)
         f.write(b"arch")
-        f.write(struct.pack("<I", 1))  # string type
-        f.write(struct.pack("<I", 5))  # value length
+        f.write(struct.pack("<I", 7))  # string type (7)
+        f.write(struct.pack("<Q", 5))  # value length (uint64)
         f.write(b"llama")
         # Second KV: corrupt (truncated)
-        f.write(struct.pack("<I", 4))  # key length
+        f.write(struct.pack("<Q", 4))  # key length (uint64)
         f.write(b"test")
         # Missing type and value — corrupt
         # Third KV: valid
-        f.write(struct.pack("<I", 4))  # key length
+        f.write(struct.pack("<Q", 4))  # key length (uint64)
         f.write(b"test")
-        f.write(struct.pack("<I", 1))  # string type
-        f.write(struct.pack("<I", 5))  # value length
+        f.write(struct.pack("<I", 7))  # string type (7)
+        f.write(struct.pack("<Q", 5))  # value length (uint64)
         f.write(b"llama")
 
     info = read_gguf_header(path)
@@ -114,9 +117,9 @@ def test_gguf_corrupt_kv_recovery():
 def test_config_host_validation():
     """Profile host should be validated as loopback."""
     profile = ProfileSpec(
-        name="test",
-        weights_path="/fake/model.gguf",
-        backend_path="/fake/llama-server",
+        alias="test",
+        weights_path=Path("/fake/model.gguf"),
+        backend_binary=Path("/fake/llama-server"),
         host="8.8.8.8",  # Public IP — should fail validation
         port=8080,
     )
@@ -128,9 +131,9 @@ def test_config_host_validation():
 def test_config_host_valid_loopback():
     """Profile with loopback host should pass validation."""
     profile = ProfileSpec(
-        name="test",
-        weights_path="/fake/model.gguf",
-        backend_path="/fake/llama-server",
+        alias="test",
+        weights_path=Path("/fake/model.gguf"),
+        backend_binary=Path("/fake/llama-server"),
         host="127.0.0.1",
         port=8080,
     )
@@ -162,8 +165,8 @@ def test_state_symlink_validation():
 def test_logging_thread_safety():
     """Logger should be thread-safe."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        log_path = Path(tmpdir) / "sinter.log"
-        logger = OperationalLogger(log_path)
+        log_dir = Path(tmpdir) / "logs"
+        logger = OperationalLogger(log_dir)
         errors = []
 
         def log_event(i):
@@ -186,6 +189,7 @@ def test_logging_thread_safety():
         assert not errors, f"Logging errors: {errors}"
 
         # Verify all 10 events were written
+        log_path = log_dir / "sinter.log"
         with open(log_path, "r") as f:
             lines = f.readlines()
         assert len(lines) == 10, f"Expected 10 log lines, got {len(lines)}"

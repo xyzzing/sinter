@@ -45,11 +45,28 @@ class AtomicFile:
             raise
 
 
-def load_state(state_dir: Path) -> StateRecord:
-    """Load state from disk. Returns default if not found."""
-    state_path = state_dir / "state.json"
+def load_state(state_dir_or_path) -> StateRecord:
+    """Load state from disk. Returns default if not found.
+    
+    Accepts either a directory path (will look for state.json inside)
+    or a direct file path to the state.json file.
+    """
+    if isinstance(state_dir_or_path, str):
+        state_dir_or_path = Path(state_dir_or_path)
+    
+    # If it's a file, use it directly; if it's a directory, look for state.json
+    if state_dir_or_path.is_file():
+        state_path = state_dir_or_path
+    else:
+        state_path = state_dir_or_path / "state.json"
+    
     if not state_path.exists():
         return StateRecord()
+    
+    # Reject symlinks for security
+    if state_path.is_symlink():
+        raise ValueError(f"State file is a symlink: {state_path}")
+    
     try:
         with open(state_path) as f:
             data = json.load(f)

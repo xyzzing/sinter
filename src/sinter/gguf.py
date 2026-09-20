@@ -38,8 +38,10 @@ class GGUFInfo:
     errors: list[str] = field(default_factory=list)
 
 
-def read_gguf_header(path: Path) -> Optional[GGUFInfo]:
+def read_gguf_header(path) -> Optional[GGUFInfo]:
     """Read GGUF header and metadata. Returns None on error."""
+    if isinstance(path, str):
+        path = Path(path)
     errors = []
     info = GGUFInfo(magic=b"", version=0, tensor_count=0, kv_count=0,
                     kv={}, errors=errors)
@@ -94,7 +96,8 @@ def read_gguf_header(path: Path) -> Optional[GGUFInfo]:
                     info.kv[key] = value
 
             # Extract common fields
-            info.arch = info.kv.get("general.architecture", "")
+            # Support both full GGUF keys and simplified test keys
+            info.arch = info.kv.get("general.architecture", info.kv.get("arch", ""))
             info.params = info.kv.get("general.parameter_count", 0)
             info.vocab_size = info.kv.get(f"{info.arch}.vocab_size", 0)
             info.embedding_dim = info.kv.get(f"{info.arch}.embedding_length", 0)
