@@ -22,8 +22,8 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-homepage = "https://github.com/sinter-project/sinter"
-repository = "https://github.com/sinter-project/sinter"
+homepage = "https://github.com/xyzzing/sinter"
+repository = "https://github.com/xyzzing/sinter"
 
 [project.scripts]
 sinter = "sinter.cli:main"
