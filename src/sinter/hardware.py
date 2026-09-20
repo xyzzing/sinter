@@ -188,10 +188,11 @@ def check_llama_server() -> tuple[bool, Optional[int], Optional[str]]:
 
     # Get version
     version = None
-    which = run_cmd(["which", "llama-server"])
-    if not which:
-        which = "/home/zacch/llama_rocmfpx_build/ROCmFPX/build/bin/llama-server"
-    version_out = run_cmd([which, "--version"])
+    from sinter.discovery import find_llama_server
+    which = find_llama_server()
+    if which is None:
+        pass
+    version_out = run_cmd([str(which), "--version"]) if which else None
     if version_out:
         version = version_out.splitlines()[0]
 

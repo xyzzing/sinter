@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from sinter.discovery import find_llama_bench
+
 
 @dataclass
 class BenchResult:
@@ -53,31 +55,8 @@ class ContextTestResult:
 
 
 def get_llama_bench_path() -> Optional[Path]:
-    """Find llama-bench binary."""
-    # Try common locations
-    candidates = [
-        Path("/home/zacch/llama_rocmfpx_build/ROCmFPX/build/bin/llama-bench"),
-        Path("/usr/local/bin/llama-bench"),
-        Path("/usr/bin/llama-bench"),
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-
-    # Try to find via which
-    try:
-        result = subprocess.run(
-            ["which", "llama-bench"],
-            capture_output=True,
-            text=True,
-            timeout=5.0,
-        )
-        if result.returncode == 0:
-            return Path(result.stdout.strip())
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        pass
-
-    return None
+    """Find llama-bench binary using discovery."""
+    return find_llama_bench()
 
 
 def run_llama_bench(

@@ -8,13 +8,13 @@
 - Observed Total VRAM: 24.0 GB
 
 ## 2. Pinned Backend Discovery
-- llama-server Binary Path: /home/zacch/llama_rocmfpx_build/ROCmFPX/build/bin/llama-server
+- llama-server Binary Path: [local path redacted]
 - llama.cpp Commit / Build ID: v257 (c49ebdb), ROCmFPX build
 - Supported CLI Flags: OpenAI-compatible API; standard llama-server flags
 
 ## 3. Real Model Identification
-- Artifact Path: /home/zacch/models/Qwen3.8-27B-TTURFO-Fable-C-Fusion-709-L-Uncen-NM-DAU-NEO-MTP-IQ4_XS.gguf
-- Model Name & Architecture: Qwen3.8-27B-TTURBO-Fable-C-Fusion-709-L-Uncen-NM-DAU-NEO-MTP-IQ4_XS (IQ4_XS quantization)
+- Artifact Path: [local path redacted]
+- Model Name & Architecture: [model name redacted] (IQ4_XS quantization)
 - SHA256 / Checksum: (to be computed)
 - License Record: (to be verified — F26 open item)
 

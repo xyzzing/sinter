@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from sinter.discovery import find_llama_cpp_source
+
 
 @dataclass
 class UpdateResult:
@@ -26,16 +28,8 @@ class UpdateResult:
 
 
 def get_llama_cpp_source_dir() -> Optional[Path]:
-    """Find llama.cpp source directory."""
-    candidates = [
-        Path("/home/zacch/llama_rocmfpx_build/ROCmFPX"),
-        Path("/home/zacch/llama.cpp"),
-        Path("/usr/local/src/llama.cpp"),
-    ]
-    for candidate in candidates:
-        if candidate.exists() and (candidate / "CMakeLists.txt").exists():
-            return candidate
-    return None
+    """Find llama.cpp source directory using discovery."""
+    return find_llama_cpp_source()
 
 
 def get_build_dir(source_dir: Path) -> Path:

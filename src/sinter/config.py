@@ -10,7 +10,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-DEFAULT_CONFIG_DIR = Path.home() / ".config" / "sinter"
+from sinter.discovery import find_llama_server
+
+# Support SINTER_CONFIG_DIR override for CI and isolated testing
+_config_dir_env = os.environ.get("SINTER_CONFIG_DIR")
+if _config_dir_env:
+    DEFAULT_CONFIG_DIR = Path(_config_dir_env)
+else:
+    DEFAULT_CONFIG_DIR = Path.home() / ".config" / "sinter"
+
 DEFAULT_STATE_DIR = Path.home() / ".local" / "state" / "sinter"
 DEFAULT_DATA_DIR = Path.home() / ".local" / "share" / "sinter"
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "sinter"
@@ -29,7 +37,7 @@ class ProfileSpec:
     alias: str
     weights_path: Path
     weights_digest: Optional[str] = None  # SHA-256
-    backend_binary: Path = Path("/home/zacch/llama_rocmfpx_build/ROCmFPX/build/bin/llama-server")
+    backend_binary: Optional[Path] = None  # resolved via discovery if None
     backend_version: Optional[str] = None
     device: str = "ROCm0"
     n_gpu_layers: int = 63
@@ -90,7 +98,7 @@ def load_config(config_path: Optional[Path] = None) -> SinterConfig:
             alias=alias,
             weights_path=Path(spec["weights_path"]),
             weights_digest=spec.get("weights_digest"),
-            backend_binary=Path(spec.get("backend_binary", str(ProfileSpec.backend_binary))),
+            backend_binary=Path(spec["backend_binary"]) if spec.get("backend_binary") else None,
             backend_version=spec.get("backend_version"),
             device=spec.get("device", ProfileSpec.device),
             n_gpu_layers=int(spec.get("n_gpu_layers", ProfileSpec.n_gpu_layers)),
@@ -129,7 +137,8 @@ def save_config(config: SinterConfig) -> None:
         lines.append(f"weights_path = \"{profile.weights_path}\"")
         if profile.weights_digest:
             lines.append(f"weights_digest = \"{profile.weights_digest}\"")
-        lines.append(f"backend_binary = \"{profile.backend_binary}\"")
+        if profile.backend_binary:
+            lines.append(f"backend_binary = \"{profile.backend_binary}\"")
         lines.append(f"n_gpu_layers = {profile.n_gpu_layers}")
         lines.append(f"ctx_size = {profile.ctx_size}")
         lines.append(f"cache_type_k = \"{profile.cache_type_k}\"")
@@ -194,8 +203,13 @@ def validate_profile(profile: ProfileSpec) -> list[str]:
             except OSError as e:
                 errors.append(f"failed to compute weights SHA256: {e}")
 
-    if not profile.backend_binary.exists():
-        errors.append(f"backend binary not found: {profile.backend_binary}")
+    try:
+        resolved_binary = find_llama_server(profile.backend_binary)
+    except ValueError as e:
+        errors.append(f"backend binary error: {e}")
+        resolved_binary = None
+    if resolved_binary is None:
+        errors.append("backend binary not found. Set backend_binary in profile, set SINTER_LLAMA_SERVER, or put llama-server on PATH")  # noqa: E501
 
     if profile.n_gpu_layers < 0:
         errors.append(f"n_gpu_layers must be >= 0, got {profile.n_gpu_layers}")

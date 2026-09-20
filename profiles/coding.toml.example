@@ -1,0 +1,21 @@
+# SINTER profile: coding (example)
+# Copy this to ~/.config/sinter/profiles/coding.toml and set real paths.
+# Or use `sinter setup` to generate it automatically.
+
+[profiles.coding]
+alias = "coding"
+weights_path = "/absolute/path/to/model.gguf"
+backend_binary = "/absolute/path/to/llama-server"
+device = "ROCm0"
+n_gpu_layers = 0
+ctx_size = 16384
+cache_type_k = "q4_0"
+cache_type_v = "q4_0"
+flash_attn = true
+batch_size = 4096
+ubatch_size = 1024
+threads = 6
+n_parallel = 1
+port = 8080
+host = "127.0.0.1"
+reserve_bytes = 536870912  # 512 MiB

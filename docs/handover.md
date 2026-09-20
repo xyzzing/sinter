@@ -10,7 +10,7 @@
 - Inspected repository: only `docs/prd.md` and `SKILLS.md` exist
 - Collected verified hardware facts (see `docs/capabilities.md` Section 1-4)
 - Identified active llama-server build: v257 (c49ebdb), ROCmFPX, bound to 0.0.0.0:8080
-- Identified active model: Qwen3.8-27B-TTURBO-Fable-C-Fusion-709-L-Uncen-NM-DAU-NEO-MTP-IQ4_XS.gguf (15.3 GB, IQ4_XS)
+- Identified active model: [model name redacted].gguf (15.3 GB, IQ4_XS)
 - Corrected known environment facts: ROCm is 7.1.1 (not 6.x), ROCM_PATH is stale
 - Established baseline capability report
 
@@ -71,7 +71,7 @@ src/sinter/
 
 ### Running Services
 - llama-server v257 on 0.0.0.0:8080 (PID varies)
-- Model: Qwen3.8-27B-TTURBO-Fable-C-Fusion-709-L-Uncen-NM-DAU-NEO-MTP-IQ4_XS.gguf
+- Model: [model name redacted].gguf
 - Config: 63 GPU layers, ctx=131072, KV cache q4_0, flash attn on
 
 ### Known Limitations
@@ -134,9 +134,9 @@ python3 -m sinter.cli status
 | GPU | AMD Radeon RX 7900 XT/XTX (Navi 31), 24 GB VRAM |
 | ROCm | 7.1.1 |
 | llama-server | v257 (c49ebdb), ROCmFPX build |
-| Model | Qwen3.8-27B-TTURBO-Fable-C-Fusion-709-L-Uncen-NM-DAU-NEO-MTP-IQ4_XS.gguf |
+| Model | [model name redacted].gguf |
 | Server URL | http://0.0.0.0:8080 |
-| Backend binary | /home/zacch/workspace/03_infra/llama_rocmfpx_build/ROCmFPX/build/bin/llama-server |
+| Backend binary | [local path redacted] |
 
 ## 6. Handover Notes
 

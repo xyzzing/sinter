@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from sinter.config import ProfileSpec, load_config, save_config
+from sinter.discovery import find_llama_server
 from sinter.llama_version import LlamaVersionManager
 
 
@@ -59,23 +60,9 @@ def detect_installation() -> InstallationInfo:
     if config.config_dir.exists():
         info.config_file = config.config_dir / "config.toml"
 
-    # Search for llama-server binary
-    search_paths = [
-        "/usr/local/bin/llama-server",
-        "/usr/bin/llama-server",
-        Path.home() / "llama.cpp/build/bin/llama-server",
-        Path.home() / "llama_rocmfpx_build/ROCmFPX/build/bin/llama-server",
-    ]
-    for path in search_paths:
-        if Path(path).exists():
-            info.llama_server_binary = Path(path)
-            break
+    # Search for llama-server binary using discovery
+    info.llama_server_binary = find_llama_server()
 
-    # Also check PATH
-    if info.llama_server_binary is None:
-        found = shutil.which("llama-server")
-        if found:
-            info.llama_server_binary = Path(found)
 
     # Try to get version
     if info.llama_server_binary:

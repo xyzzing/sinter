@@ -43,7 +43,10 @@ pip install sinter
 # Check hardware capabilities
 sinter doctor
 
-# Validate a profile
+# Set up your first profile (detects llama-server automatically)
+sinter setup --profile coding --backend /path/to/llama-server --weights /path/to/model.gguf
+
+# Validate the profile
 sinter validate coding
 
 # Plan resource usage
@@ -61,22 +64,31 @@ sinter down
 
 ## Configuration
 
-Sinter uses TOML configuration files. Create `~/.config/sinter/config.toml`:
+Sinter uses TOML configuration files. Profiles live in `~/.config/sinter/profiles/`.
+
+Use `sinter setup` to create a profile from detected software, or copy the example:
+
+```bash
+cp profiles/coding.toml.example ~/.config/sinter/profiles/coding.toml
+# Edit the copied file with your actual paths
+```
+
+Example profile:
 
 ```toml
-default_profile = "coding"
-
 [profiles.coding]
-weights_path = "/path/to/model.gguf"
-backend_binary = "/path/to/llama-server"
-n_gpu_layers = 63
-ctx_size = 131072
+weights_path = "/absolute/path/to/model.gguf"
+backend_binary = "/absolute/path/to/llama-server"
+n_gpu_layers = 0
+ctx_size = 16384
 cache_type_k = "q4_0"
 cache_type_v = "q4_0"
 flash_attn = true
 threads = 6
 port = 8080
 ```
+
+> **Note**: `n_gpu_layers = 0` and `ctx_size = 16384` are safe placeholders. Use `sinter plan` to determine optimal values for your hardware.
 
 See [docs/configuration.md](docs/configuration.md) for complete configuration reference.
 

@@ -7,6 +7,7 @@ Uses a real llama-server if available, otherwise mocks the backend.
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -17,9 +18,18 @@ from sinter.logging import OperationalLogger
 from sinter.supervisor import Supervisor
 
 
+@pytest.mark.real_hardware
 @pytest.mark.skipif(
-    not Path("/home/zacch/llama_rocmfpx_build/ROCmFPX/build/bin/llama-server").exists(),
-    reason="llama-server binary not available",
+    not os.environ.get("SINTER_RUN_REAL_HARDWARE_TESTS"),
+    reason="Real hardware tests not requested (set SINTER_RUN_REAL_HARDWARE_TESTS=1)",
+)
+@pytest.mark.skipif(
+    not os.environ.get("SINTER_LLAMA_SERVER"),
+    reason="SINTER_LLAMA_SERVER not set",
+)
+@pytest.mark.skipif(
+    not os.environ.get("SINTER_WEIGHTS"),
+    reason="SINTER_WEIGHTS not set",
 )
 def test_full_client_journey():
     """Complete acceptance journey: up → status → down → status."""
@@ -35,8 +45,8 @@ def test_full_client_journey():
         # Step 2: Launch
         profile = ProfileSpec(
             alias="test",
-            weights_path=Path("/home/zacch/models/Qwen3.8-27B-TTURBO-Fable-C-Fusion-709-L-Uncen-NM-DAU-NEO-MTP-IQ4_XS.gguf"),
-            backend_binary=Path("/home/zacch/llama_rocmfpx_build/ROCmFPX/build/bin/llama-server"),
+            weights_path=Path(os.environ["SINTER_WEIGHTS"]),
+            backend_binary=Path(os.environ["SINTER_LLAMA_SERVER"]),
             device="ROCm0",
             n_gpu_layers=63,
             ctx_size=131072,
@@ -88,7 +98,7 @@ def test_logging_captures_events():
         profile = ProfileSpec(
             alias="test",
             weights_path=Path("/nonexistent/model.gguf"),
-            backend_binary=Path("/nonexistent/llama-server"),
+            backend_binary=None,
         )
 
         instance = sup.launch(profile, timeout=5.0)
