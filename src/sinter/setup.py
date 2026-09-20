@@ -27,6 +27,10 @@ class InstallationInfo:
     running_process: Optional[dict] = None
     model_files: list[Path] = field(default_factory=list)
     config_file: Optional[Path] = None
+    rocm_installed: bool = False
+    rocm_version: Optional[str] = None
+    gpu_detected: bool = False
+    gpu_name: Optional[str] = None
 
 
 def clear_screen() -> None:
@@ -82,6 +86,41 @@ def detect_installation() -> InstallationInfo:
         except (subprocess.TimeoutExpired, OSError):
             pass
 
+    # Detect ROCm installation
+    rocm_paths = ["/opt/rocm", "/usr/lib/rocm"]
+    for rocm_path in rocm_paths:
+        if Path(rocm_path).exists():
+            info.rocm_installed = True
+            # Try to get ROCm version
+            try:
+                result = subprocess.run(
+                    ["rocm-smi", "--version"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    info.rocm_version = result.stdout.strip().split("\n")[0]
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+            break
+
+    # Detect GPU
+    try:
+        result = subprocess.run(
+            ["lspci", "-nn"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if "VGA compatible controller" in line:
+                    info.gpu_detected = True
+                    # Extract GPU name
+                    parts = line.split(":")
+                    if len(parts) >= 3:
+                        info.gpu_name = parts[2].strip().split(" ")[0]
+                    break
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
     # Check for systemd service
     try:
         result = subprocess.run(
@@ -132,8 +171,66 @@ def detect_installation() -> InstallationInfo:
     return info
 
 
-def install_llama_cpp() -> bool:
-    """Install llama.cpp from source."""
+def install_rocm() -> bool:
+    """Install ROCm drivers and libraries."""
+    print("Installing ROCm...")
+    print("This requires root privileges and may take several minutes.")
+    print()
+
+    # Detect distribution
+    distro = "unknown"
+    try:
+        with open("/etc/os-release") as f:
+            for line in f:
+                if line.startswith("ID="):
+                    distro = line.split("=")[1].strip()
+                    break
+    except OSError:
+        pass
+
+    if distro == "fedora":
+        print("Installing ROCm on Fedora...")
+        try:
+            subprocess.run(
+                ["sudo", "dnf", "install", "-y", "rocm", "rocm-cl", "hsa-rocr-dev"],
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to install ROCm: {e}")
+            print("Try manually: sudo dnf install rocm")
+            return False
+    elif distro == "ubuntu" or distro == "debian":
+        print("Installing ROCm on Ubuntu/Debian...")
+        try:
+            subprocess.run(
+                ["sudo", "apt-get", "update"],
+                check=True
+            )
+            subprocess.run(
+                ["sudo", "apt-get", "install", "-y", "rocm-dev"],
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to install ROCm: {e}")
+            print("Try manually: sudo apt-get install rocm-dev")
+            return False
+    else:
+        print(f"Unknown distribution: {distro}")
+        print("Please install ROCm manually:")
+        print("  https://rocm.docs.amd.com/en/latest/install/install.html")
+        return False
+
+    # Verify installation
+    if shutil.which("rocm-smi"):
+        print("ROCm installed successfully!")
+        return True
+    else:
+        print("ROCm installation may have failed. Check manually.")
+        return False
+
+
+def install_llama_cpp(rocm=True) -> bool:
+    """Install llama.cpp from source with optional ROCm support."""
     print("Installing llama.cpp from source...")
     print("This may take several minutes.")
     print()
@@ -170,11 +267,19 @@ def install_llama_cpp() -> bool:
     build_dir = repo_dir / "build"
     build_dir.mkdir(exist_ok=True)
 
+    cmake_args = [
+        "cmake", "-B", str(build_dir), "-DCMAKE_BUILD_TYPE=Release"
+    ]
+
+    if rocm:
+        print("  Enabling ROCm support...")
+        cmake_args.extend([
+            "-DGGML_HIPBLAS=ON",
+            "-DGGML_CUDA=OFF",
+        ])
+
     try:
-        subprocess.run(
-            ["cmake", "-B", str(build_dir), "-DCMAKE_BUILD_TYPE=Release"],
-            cwd=repo_dir, check=True
-        )
+        subprocess.run(cmake_args, cwd=repo_dir, check=True)
         subprocess.run(
             ["cmake", "--build", str(build_dir), "-j", str(os.cpu_count())],
             cwd=repo_dir, check=True
@@ -283,6 +388,18 @@ def show_status(info: InstallationInfo) -> None:
     print("══════════════════════════════════════════════════════════════")
     print()
 
+    if info.gpu_detected:
+        print(f"✓ GPU detected: {info.gpu_name}")
+    else:
+        print("✗ GPU: NOT DETECTED")
+
+    if info.rocm_installed:
+        print("✓ ROCm installed")
+        if info.rocm_version:
+            print(f"  Version: {info.rocm_version}")
+    else:
+        print("✗ ROCm: NOT INSTALLED")
+
     if info.llama_server_binary:
         print(f"✓ llama-server binary: {info.llama_server_binary}")
         if info.llama_server_version:
@@ -324,14 +441,15 @@ def run_setup_wizard() -> int:
 
         print("Main Menu:")
         print("  1. Detect existing installation")
-        print("  2. Install llama.cpp")
-        print("  3. Download 27B model")
-        print("  4. Configure Sinter profile")
-        print("  5. Test connection")
-        print("  6. Exit")
+        print("  2. Install ROCm drivers")
+        print("  3. Install llama.cpp (with ROCm)")
+        print("  4. Download 27B model")
+        print("  5. Configure Sinter profile")
+        print("  6. Test connection")
+        print("  7. Exit")
         print()
 
-        choice = input("Select option (1-6): ").strip()
+        choice = input("Select option (1-7): ").strip()
 
         if choice == "1":
             print("Detecting installation...")
@@ -340,20 +458,41 @@ def run_setup_wizard() -> int:
             input("Press Enter to continue...")
 
         elif choice == "2":
-            if install_llama_cpp():
-                print("Installation successful!")
+            if install_rocm():
+                print("ROCm installation successful!")
             else:
-                print("Installation failed.")
+                print("ROCm installation failed.")
             input("Press Enter to continue...")
 
         elif choice == "3":
+            info = detect_installation()
+            if info.rocm_installed:
+                print("ROCm detected, building with ROCm support...")
+                if install_llama_cpp(rocm=True):
+                    print("Installation successful!")
+                else:
+                    print("Installation failed.")
+            else:
+                print("ROCm not detected. Install ROCm first (option 2).")
+                print("Or install llama.cpp without ROCm support?")
+                confirm = input("Install without ROCm? (y/N): ").strip().lower()
+                if confirm == "y":
+                    if install_llama_cpp(rocm=False):
+                        print("Installation successful!")
+                    else:
+                        print("Installation failed.")
+                else:
+                    print("Please install ROCm first.")
+            input("Press Enter to continue...")
+
+        elif choice == "4":
             if download_model():
                 print("Model downloaded successfully!")
             else:
                 print("Download failed.")
             input("Press Enter to continue...")
 
-        elif choice == "4":
+        elif choice == "5":
             info = detect_installation()
             if info.llama_server_binary and info.model_files:
                 model = info.model_files[0]
@@ -363,10 +502,10 @@ def run_setup_wizard() -> int:
                     print("Profile configuration failed.")
             else:
                 print("Need llama-server binary and model file first.")
-                print("Run options 2 and 3.")
+                print("Run options 3 and 4.")
             input("Press Enter to continue...")
 
-        elif choice == "5":
+        elif choice == "6":
             port = input("Port (default 8080): ").strip()
             if not port:
                 port = "8080"
@@ -376,7 +515,7 @@ def run_setup_wizard() -> int:
                 print("Connection test failed.")
             input("Press Enter to continue...")
 
-        elif choice == "6":
+        elif choice == "7":
             print("Goodbye!")
             return 0
 
