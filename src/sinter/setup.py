@@ -6,16 +6,19 @@ detecting existing installations, and configuring profiles.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 from sinter.config import ProfileSpec, load_config, save_config
+from sinter.llama_version import LlamaVersionManager
 
 
 @dataclass
@@ -292,6 +295,18 @@ def install_llama_cpp(rocm=True) -> bool:
     server_binary = build_dir / "bin" / "llama-server"
     if server_binary.exists():
         print(f"llama-server built successfully: {server_binary}")
+
+        # Record version
+        vm = LlamaVersionManager()
+        info = vm.get_installed_version()
+        if info:
+            vm.version_file.write_text(
+                json.dumps({
+                    "version": info.version,
+                    "installed_at": time.time(),
+                }, indent=2)
+            )
+
         return True
     else:
         print("Build completed but llama-server not found.")
@@ -404,6 +419,11 @@ def show_status(info: InstallationInfo) -> None:
         print(f"✓ llama-server binary: {info.llama_server_binary}")
         if info.llama_server_version:
             print(f"  Version: {info.llama_server_version}")
+
+        # Check if update is available
+        vm = LlamaVersionManager()
+        if vm.needs_update():
+            print(f"  ⚠ Update available: {vm.get_latest_version()}")
     else:
         print("✗ llama-server binary: NOT FOUND")
 
@@ -446,10 +466,11 @@ def run_setup_wizard() -> int:
         print("  4. Download 27B model")
         print("  5. Configure Sinter profile")
         print("  6. Test connection")
-        print("  7. Exit")
+        print("  7. Check for llama.cpp updates")
+        print("  8. Exit")
         print()
 
-        choice = input("Select option (1-7): ").strip()
+        choice = input("Select option (1-8): ").strip()
 
         if choice == "1":
             print("Detecting installation...")
@@ -516,6 +537,25 @@ def run_setup_wizard() -> int:
             input("Press Enter to continue...")
 
         elif choice == "7":
+            vm = LlamaVersionManager()
+            installed = vm.get_installed_version()
+            if installed:
+                print(f"Installed version: {installed.version}")
+                if vm.needs_update():
+                    print(f"Update available: {vm.get_latest_version()}")
+                    confirm = input("Update now? (y/N): ").strip().lower()
+                    if confirm == "y":
+                        if vm.update():
+                            print("Update completed successfully!")
+                        else:
+                            print("Update failed.")
+                else:
+                    print("Already up to date!")
+            else:
+                print("No llama.cpp installation detected.")
+            input("Press Enter to continue...")
+
+        elif choice == "8":
             print("Goodbye!")
             return 0
 

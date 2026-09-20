@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from sinter.hardware import probe
+from sinter.health import HealthMonitor
 
 
 @dataclass
@@ -124,6 +125,7 @@ class TelemetryBroadcaster:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._instance_path = self.state_dir / "instance.json"
+        self.health_monitor = HealthMonitor()
 
     def start(self) -> None:
         """Start the telemetry broadcast thread."""
@@ -147,6 +149,30 @@ class TelemetryBroadcaster:
         while not self._stop_event.is_set():
             try:
                 telemetry = collect_telemetry()
+
+                # Record health metrics
+                health_alerts = []
+                if telemetry.hotspot_celsius is not None:
+                    health_alerts.extend(
+                        self.health_monitor.record_temperature(
+                            telemetry.hotspot_celsius
+                        )
+                    )
+
+                # Calculate VRAM usage percent
+                if telemetry.vram_available_mb is not None:
+                    # Assume 24GB total for RX 7900 XTX
+                    total_mb = 24 * 1024
+                    used_mb = total_mb - telemetry.vram_available_mb
+                    used_gb = used_mb / 1024.0
+                    health_alerts.extend(
+                        self.health_monitor.record_vram_usage(used_gb, 24.0)
+                    )
+
+                # Log alerts
+                for alert in health_alerts:
+                    print(f"[HEALTH {alert.severity.upper()}] {alert.message}")
+
                 state_data = {
                     "telemetry": {
                         "vram_available_mb": telemetry.vram_available_mb,
@@ -156,6 +182,7 @@ class TelemetryBroadcaster:
                         "gtt_spill_detected": telemetry.gtt_spill_detected,
                         "timestamp": telemetry.timestamp,
                     },
+                    "health": self.health_monitor.get_health_summary(),
                     "instance": self.instance_info,
                 }
                 update_state_atomic(state_data, self._instance_path)
@@ -174,3 +201,7 @@ class TelemetryBroadcaster:
                 return json.load(f)
         except (OSError, json.JSONDecodeError):
             return None
+
+    def save_health_report(self) -> Path:
+        """Save a health report to file."""
+        return self.health_monitor.save_health_report()
