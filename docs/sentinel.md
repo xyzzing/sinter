@@ -1,0 +1,77 @@
+# Sentinel — Session Telemetry
+
+Sentinel provides session-scoped, out-of-band telemetry for Sinter-managed `llama-server` processes on AMD ROCm workstations. It measures temperature, power, energy consumption, and optionally estimates electricity cost and carbon emissions.
+
+## Features
+
+- **Passive monitoring**: No HTTP proxying or in-path sampling on the inference request path
+- **Session-scoped**: Samples only while a verified Sinter instance is running
+- **Measurement tiers**: Transparent quality indicators for energy measurements
+- **Thermal policy**: Advisory warnings with optional critical stop
+- **Local estimates only**: Cost and CO₂e are operational estimates, not ESG accounting
+
+## Measurement Tiers
+
+| Tier | Source | Quality |
+|------|--------|---------|
+| 1 | Wall-meter file/counter (user-configured) | Metered |
+| 2 | GPU hwmon `energy1_input` (µJ) | Metered |
+| 3 | GPU hwmon `power1_average` integration | Estimated |
+| 4 | Explicit `assume_power_w` | Estimate |
+| 0 | No power/energy data | Unavailable |
+
+## Configuration
+
+Add to `~/.config/sinter/config.toml`:
+
+```toml
+[sentinel]
+sample_hz = 1.0
+warn_hotspot_c = 95
+critical_hotspot_c = 105
+critical_hold_s = 8
+auto_stop_on_critical = false
+# assume_power_w = 150.0  # Only if no power sensor
+# wall_energy_path = "/path/to/counter"
+
+[accounting]
+currency = "USD"
+electricity_tariff_per_kwh = 0.12
+emissions_region = "US"
+emissions_factor_kgco2e_per_kwh = 0.40
+emissions_factor_source = "user-configured"
+emissions_factor_version = "2024-01"
+allow_assumed_power = false
+```
+
+## CLI Commands
+
+```bash
+# One-shot sensor probe
+sinter telemetry
+
+# JSON output
+sinter telemetry --json
+
+# Last session summary
+sinter telemetry --session
+
+# Garbage collect old telemetry (>14 days)
+sinter telemetry --gc
+
+# Status includes telemetry
+sinter status
+```
+
+## What Sentinel Is Not
+
+- **Not Scope 1/2/3 accounting**: No supplier emissions, no product LCA
+- **Not ESG disclosure**: No ESRS, ISSB, or offset features
+- **Not automatic**: Default policy is advisory; auto-stop is opt-in
+- **Not a benchmark**: Compass handles benchmarking separately
+
+## Data Storage
+
+- `$XDG_STATE_HOME/sinter/telemetry/current.json` — latest sample (atomic)
+- `$XDG_STATE_HOME/sinter/telemetry/sessions/<uuid>.json` — session summaries
+- `$XDG_STATE_HOME/sinter/telemetry/samples/<uuid>.jsonl` — raw samples (14-day retention)

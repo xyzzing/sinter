@@ -1,16 +1,15 @@
-"""Tests for telemetry broadcast."""
+"""Tests for Sentinel telemetry."""
 
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from sinter.telemetry import (
-    TelemetryBroadcaster,
+    SentinelSampler,
     TelemetryState,
     collect_telemetry,
+    compute_energy_tier3,
     update_state_atomic,
 )
 
@@ -59,89 +58,144 @@ def test_telemetry_state_dataclass():
     )
     assert state.vram_available_mb == 4096
     assert state.pacing_active is False
+    assert state.schema_version == 2
 
 
-def test_vram_headroom_calculation():
-    """VRAM headroom = available - 2.5GB safety margin."""
-    with patch("sinter.telemetry.probe") as mock_probe:
-        mock_info = MagicMock()
-        mock_info.gpu_vram_total_gb = 24.0
-        mock_info.gpu_vram_used_gb = 16.0
-        mock_info.gpu_temperature_celsius = None
-        mock_info.cpu_temperature_celsius = None
-        mock_probe.return_value = mock_info
+def test_collect_telemetry_with_mock_sensors():
+    """collect_telemetry uses sensors probe."""
+    from sinter.sensors import SensorReading
 
+    mock_reading = SensorReading(
+        ts="2024-01-01T00:00:00+00:00",
+        source="sysfs:card0",
+        quality="ok",
+        gpu_edge_c=75.0,
+        gpu_hotspot_c=85.0,
+        power_w=150.0,
+        vram_used_bytes=8589934592,
+        vram_total_bytes=16106127360,
+    )
+
+    with patch("sinter.telemetry.probe_sensors", return_value=mock_reading):
         state = collect_telemetry()
 
-        # Available = 8GB = 8192MB
-        assert state.vram_available_mb == 8192
-        # Headroom = 8192 - 2560 = 5632MB
-        assert state.vram_headroom_mb == 5632
+        assert state.hotspot_celsius == 85.0
+        assert state.edge_celsius == 75.0
+        assert state.power_w == 150.0
+        # VRAM available = 15GB - 8GB = 7GB = 7168MB (16106127360 is 15GB, not 16)
+        assert state.vram_available_mb == 7168
+        # Headroom = 7168 - 2560 = 4608
+        assert state.vram_headroom_mb == 4608
 
 
 def test_pacing_active_high_temperature():
     """Pacing active when hotspot > 88°C."""
-    with patch("sinter.telemetry.probe") as mock_probe, \
-         patch("sinter.telemetry._read_gpu_temperature", return_value=90.0):
-        mock_info = MagicMock()
-        mock_info.gpu_vram_total_gb = 24.0
-        mock_info.gpu_vram_used_gb = 10.0
-        mock_probe.return_value = mock_info
+    from sinter.sensors import SensorReading
 
+    mock_reading = SensorReading(
+        ts="2024-01-01T00:00:00+00:00",
+        source="sysfs:card0",
+        quality="ok",
+        gpu_edge_c=90.0,
+        gpu_hotspot_c=95.0,
+        power_w=150.0,
+        vram_used_bytes=8589934592,
+        vram_total_bytes=16106127360,
+    )
+
+    with patch("sinter.telemetry.probe_sensors", return_value=mock_reading):
         state = collect_telemetry()
 
         assert state.pacing_active is True
-        assert state.hotspot_celsius == 90.0
+        assert state.hotspot_celsius == 95.0
 
 
 def test_pacing_active_low_vram():
     """Pacing active when VRAM < 1.5GB."""
-    with patch("sinter.telemetry.probe") as mock_probe, \
-         patch("sinter.telemetry._read_gpu_temperature", return_value=None):
-        mock_info = MagicMock()
-        mock_info.gpu_vram_total_gb = 8.0
-        mock_info.gpu_vram_used_gb = 6.6  # Only 1.4GB available
-        mock_probe.return_value = mock_info
+    from sinter.sensors import SensorReading
 
+    mock_reading = SensorReading(
+        ts="2024-01-01T00:00:00+00:00",
+        source="sysfs:card0",
+        quality="ok",
+        gpu_edge_c=70.0,
+        power_w=150.0,
+        vram_used_bytes=14680064000,  # Only 1.4GB available of 16GB
+        vram_total_bytes=16106127360,
+    )
+
+    with patch("sinter.telemetry.probe_sensors", return_value=mock_reading):
         state = collect_telemetry()
 
         assert state.pacing_active is True
         assert state.vram_available_mb < 1536
 
 
-def test_telemetry_broadcaster_start_stop():
-    """Telemetry broadcaster can start and stop."""
+def test_energy_tier3_integration():
+    """Energy computation via power integration (Tier 3)."""
+    from sinter.sensors import SensorReading
+
+    # 10 samples at 1 Hz, 100W each = 1000J = 0.0002778 kWh
+    samples = []
+    for i in range(10):
+        samples.append(SensorReading(
+            ts=f"2024-01-01T00:00:{i:02d}+00:00",
+            source="sysfs:card0",
+            quality="ok",
+            power_w=100.0,
+        ))
+
+    result = compute_energy_tier3(samples, sample_hz=1.0)
+    assert result.tier == 3
+    assert result.energy_kwh is not None
+    # 100W * 10s = 1000J = 0.0002778 kWh
+    assert abs(result.energy_kwh - 0.0002778) < 0.00001
+
+
+def test_energy_tier3_missing_samples():
+    """Energy computation with missing power samples."""
+    from sinter.sensors import SensorReading
+
+    samples = []
+    for i in range(5):
+        if i == 2:
+            # Missing power reading
+            samples.append(SensorReading(
+                ts=f"2024-01-01T00:00:{i:02d}+00:00",
+                source="sysfs:card0",
+                quality="degraded",
+                power_w=None,
+            ))
+        else:
+            samples.append(SensorReading(
+                ts=f"2024-01-01T00:00:{i:02d}+00:00",
+                source="sysfs:card0",
+                quality="ok",
+                power_w=100.0,
+            ))
+
+    result = compute_energy_tier3(samples, sample_hz=1.0)
+    assert result.tier == 3
+    assert result.missing_samples == 1
+    assert result.quality == "degraded"
+
+
+def test_sentinel_sampler_initialization():
+    """SentinelSampler can be initialized."""
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir)
-        broadcaster = TelemetryBroadcaster(state_dir)
-
-        broadcaster.start()
-        # Give it time to write one state
-        import time
-        time.sleep(1.5)
-        broadcaster.stop()
-
-        # Verify state file was written
-        instance_path = state_dir / "instance.json"
-        assert instance_path.exists()
-
-
-def test_telemetry_broadcaster_get_current_state():
-    """Read current telemetry state."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        state_dir = Path(tmpdir)
-        broadcaster = TelemetryBroadcaster(state_dir)
-
-        # Write initial state
-        update_state_atomic(
-            {"telemetry": {"test": True}, "instance": {}},
-            state_dir / "instance.json",
+        sampler = SentinelSampler(
+            instance_uuid="test-uuid",
+            profile="test",
+            pid=1234,
+            start_time=1234567890,
+            state_dir=state_dir,
         )
-
-        state = broadcaster.get_current_state()
-        assert state is not None
-        assert state["telemetry"]["test"] is True
+        assert sampler.instance_uuid == "test-uuid"
+        assert sampler.profile == "test"
+        assert sampler.pid == 1234
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    import pytest as _pytest
+    _pytest.main([__file__, "-v"])

@@ -13,8 +13,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from sinter.config import ProfileSpec
+from sinter.config import ProfileSpec, SinterConfig
 from sinter.logging import OperationalLogger
+from sinter.telemetry import SentinelSampler
 
 
 @dataclass
@@ -52,13 +53,19 @@ class Supervisor:
     """Manages llama-server lifecycle with state machine."""
 
     def __init__(
-        self, state_dir: Path, logger: OperationalLogger, runtime_dir: Optional[Path] = None
+        self,
+        state_dir: Path,
+        logger: OperationalLogger,
+        runtime_dir: Optional[Path] = None,
+        config: Optional[SinterConfig] = None,
     ):
         self.state_dir = state_dir
         self.logger = logger
         if runtime_dir is None:
             runtime_dir = state_dir / "runtime"
         self.runtime_dir = runtime_dir
+        self.config = config
+        self._sampler: Optional[SentinelSampler] = None
 
     def _read_proc_stat(self, pid: int) -> Optional[int]:
         """Read start_time from /proc/[pid]/stat. Returns None if process gone.
@@ -144,6 +151,52 @@ class Supervisor:
             return True
         except (ProcessLookupError, PermissionError):
             return False
+
+    def _start_sentinel(self, instance: InstanceRecord) -> None:
+        """Start Sentinel sampler for a verified instance."""
+        if self._sampler is not None:
+            return
+
+        if self.config is None:
+            return
+
+        self.logger.info("sentinel_start", instance_uuid=instance.instance_uuid)
+        self._sampler = SentinelSampler(
+            instance_uuid=instance.instance_uuid,
+            profile=instance.profile,
+            pid=instance.pid,
+            start_time=instance.start_time or 0,
+            state_dir=self.state_dir,
+            sample_hz=self.config.sentinel.sample_hz,
+            warn_hotspot_c=self.config.sentinel.warn_hotspot_c,
+            critical_hotspot_c=self.config.sentinel.critical_hotspot_c,
+            critical_hold_s=self.config.sentinel.critical_hold_s,
+            auto_stop_on_critical=self.config.sentinel.auto_stop_on_critical,
+            assume_power_w=self.config.sentinel.assume_power_w,
+            wall_energy_path=self.config.sentinel.wall_energy_path,
+            accounting=self.config.accounting.__dict__,
+            stop_callback=self._sentinel_stop_callback,
+        )
+        self._sampler.start()
+
+    def _stop_sentinel(self) -> Optional[dict]:
+        """Stop Sentinel sampler and return session summary."""
+        if self._sampler is None:
+            return None
+
+        self.logger.info("sentinel_stop")
+        summary = self._sampler.stop()
+        self._sampler = None
+        return summary.to_dict()
+
+    def _sentinel_stop_callback(self, instance_uuid: str) -> None:
+        """Callback from Sentinel when critical thermal threshold reached."""
+        self.logger.warn("sentinel_critical_stop", instance_uuid=instance_uuid)
+        # Trigger stop through normal stop path
+        try:
+            self.stop()
+        except Exception as e:
+            self.logger.error("sentinel_stop_failed", error=str(e))
 
     def get_instance(self) -> Optional[InstanceRecord]:
         """Load current instance record."""
@@ -308,6 +361,8 @@ class Supervisor:
                         self.logger.info("launch_ready", profile=profile.alias,
                                           pid=proc.pid, port=profile.port)
                         self.save_instance(instance)
+                        # Start Sentinel telemetry for verified instance
+                        self._start_sentinel(instance)
                         return instance
             except Exception:
                 pass
@@ -331,7 +386,12 @@ class Supervisor:
         """Stop the backend. State: READY/STARTING→STOPPING→STOPPED/DEGRADED."""
         instance = self.get_instance()
         if not instance or instance.state == "STOPPED":
+            # Still stop sentinel if running
+            self._stop_sentinel()
             return instance or InstanceRecord(state="STOPPED")
+
+        # Stop Sentinel before stopping backend
+        self._stop_sentinel()
 
         if not instance.pid:
             instance.state = "STOPPED"

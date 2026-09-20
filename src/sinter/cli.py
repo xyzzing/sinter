@@ -15,6 +15,7 @@ from sinter.hardware import probe
 from sinter.lock import acquire_lock
 from sinter.memory import check_admission
 from sinter.sandbox import run_sandboxed
+from sinter.sensors import probe_sensors
 from sinter.setup import run_setup_wizard
 from sinter.supervisor import Supervisor
 from sinter.update import format_update_result, update_backend
@@ -31,6 +32,22 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         # Use the first profile's backend binary for feature detection
         first_profile = next(iter(config.profiles.values()))
         backend_features = detect_features(first_profile.backend_binary)
+
+    # One-shot sensor probe for doctor
+    try:
+        sensor_reading = probe_sensors()
+        sentinel_info = {
+            "quality": sensor_reading.quality,
+            "gpu_edge_c": sensor_reading.gpu_edge_c,
+            "gpu_hotspot_c": sensor_reading.gpu_hotspot_c,
+            "power_w": sensor_reading.power_w,
+            "missing": sensor_reading.missing,
+        }
+    except Exception as e:
+        sentinel_info = {
+            "quality": "error",
+            "error": str(e),
+        }
 
     result = {
         "sinter_version": __version__,
@@ -54,6 +71,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "rocm": {
             "version": info.rocm_version,
         },
+        "sentinel": sentinel_info,
         "llama_server": {
             "running": info.llama_server_running,
             "port": info.llama_server_port,
@@ -80,6 +98,24 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         else:
             print("  GPU: not detected")
         print(f"  ROCm: {info.rocm_version or 'not detected'}")
+
+        # Sentinel info
+        sentinel = result.get("sentinel", {})
+        if sentinel.get("quality") == "error":
+            print(f"  Sentinel: error ({sentinel.get('error', 'unknown')})")
+        elif sentinel.get("quality") == "unavailable":
+            print("  Sentinel: unavailable (no GPU detected)")
+        else:
+            print(f"  Sentinel: {sentinel.get('quality', 'unknown')}")
+            if sentinel.get("gpu_hotspot_c") is not None:
+                print(f"    Hotspot: {sentinel['gpu_hotspot_c']:.1f}°C")
+            if sentinel.get("gpu_edge_c") is not None:
+                print(f"    Edge: {sentinel['gpu_edge_c']:.1f}°C")
+            if sentinel.get("power_w") is not None:
+                print(f"    Power: {sentinel['power_w']:.1f} W")
+            if sentinel.get("missing"):
+                print(f"    Missing: {', '.join(sentinel['missing'])}")
+
         if info.llama_server_running:
             print(f"  llama-server: running on port {info.llama_server_port}")
         else:
@@ -405,12 +441,22 @@ def cmd_down(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    """Show current instance status."""
+    """Show current instance status with telemetry info."""
     config = load_config()
-    sup = Supervisor(config.runtime_dir, config.state_dir)
+    sup = Supervisor(config.runtime_dir, config.state_dir, config=config)
     instance = sup.status()
 
     result = instance.to_dict()
+
+    # Add telemetry info if available
+    telemetry_path = config.state_dir / "telemetry" / "current.json"
+    if telemetry_path.exists():
+        try:
+            with open(telemetry_path, "r") as f:
+                telemetry_data = json.load(f)
+            result["telemetry"] = telemetry_data.get("telemetry", {})
+        except (OSError, json.JSONDecodeError):
+            pass
 
     if args.json:
         print(json.dumps(result, indent=2))
@@ -428,6 +474,19 @@ def cmd_status(args: argparse.Namespace) -> int:
             print(f"Started: {instance.created_at}")
         if instance.last_error:
             print(f"Error: {instance.last_error}")
+
+        # Print telemetry summary
+        if "telemetry" in result:
+            tel = result["telemetry"]
+            print(f"  Telemetry quality: {tel.get('quality', 'unknown')}")
+            if tel.get("hotspot_celsius") is not None:
+                print(f"  Hotspot: {tel['hotspot_celsius']:.1f}°C")
+            if tel.get("edge_celsius") is not None:
+                print(f"  Edge: {tel['edge_celsius']:.1f}°C")
+            if tel.get("power_w") is not None:
+                print(f"  Power: {tel['power_w']:.1f} W")
+            if tel.get("missing"):
+                print(f"  Missing sensors: {', '.join(tel['missing'])}")
 
     return 0
 
@@ -542,6 +601,112 @@ def cmd_update(args: argparse.Namespace) -> int:
     return 0 if result.success else 1
 
 
+def cmd_telemetry(args: argparse.Namespace) -> int:
+    """One-shot sensor probe or session summary."""
+    config = load_config()
+
+    if args.session:
+        # Show last session summary
+        sessions_dir = config.state_dir / "telemetry" / "sessions"
+        if not sessions_dir.exists():
+            print("No session summaries found.")
+            return 0
+
+        summaries = list(sessions_dir.glob("*.json"))
+        if not summaries:
+            print("No session summaries found.")
+            return 0
+
+        # Sort by modification time, newest first
+        summaries.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        latest = summaries[0]
+
+        try:
+            with open(latest, "r") as f:
+                summary = json.load(f)
+
+            if args.json:
+                print(json.dumps(summary, indent=2))
+            else:
+                print(f"Session Summary ({summary.get('instance_uuid', 'unknown')[:8]}...)")
+                print(f"  Profile: {summary.get('profile', 'unknown')}")
+                print(f"  Duration: {summary.get('duration_s', 0):.1f}s")
+                print(f"  Samples: {summary.get('sample_count', 0)}")
+
+                energy = summary.get("energy", {})
+                energy_kwh = energy.get("energy_kwh", "N/A")
+                energy_tier = energy.get("tier", "N/A")
+                print(f"  Energy: {energy_kwh} kWh (tier {energy_tier})")
+                print(f"  Max hotspot: {summary.get('max_hotspot_c', 'N/A')}°C")
+                print(f"  Max edge: {summary.get('max_edge_c', 'N/A')}°C")
+                print(f"  Avg power: {summary.get('avg_power_w', 'N/A')} W")
+                print(f"  Peak power: {summary.get('peak_power_w', 'N/A')} W")
+
+                if summary.get("cost") is not None:
+                    print(f"  Cost: {summary['cost']:.2f} {summary.get('currency', '')}")
+                if summary.get("co2e_kg") is not None:
+                    print(f"  CO2e: {summary['co2e_kg']:.4f} kg")
+
+                if summary.get("missing_sensors"):
+                    print(f"  Missing sensors: {', '.join(summary['missing_sensors'])}")
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"Error reading session summary: {e}")
+            return 1
+
+    elif args.gc:
+        # Garbage collect old telemetry data
+        telemetry_dir = config.state_dir / "telemetry"
+        if not telemetry_dir.exists():
+            print("No telemetry directory found.")
+            return 0
+
+        import time
+
+        now = time.time()
+        samples_dir = telemetry_dir / "samples"
+        deleted = 0
+
+        if samples_dir.exists():
+            for sample_file in samples_dir.glob("*.jsonl"):
+                age_days = (now - sample_file.stat().st_mtime) / 86400
+                if age_days > 14:
+                    sample_file.unlink()
+                    deleted += 1
+
+        print(f"Garbage collected {deleted} old sample files.")
+        return 0
+
+    else:
+        # One-shot sensor probe
+        reading = probe_sensors()
+
+        if args.json:
+            print(json.dumps(reading.to_dict(), indent=2))
+        else:
+            print(f"Sentinel sensor probe ({reading.source})")
+            print(f"  Quality: {reading.quality}")
+
+            if reading.gpu_edge_c is not None:
+                print(f"  GPU edge: {reading.gpu_edge_c:.1f}°C")
+            if reading.gpu_hotspot_c is not None:
+                print(f"  GPU hotspot: {reading.gpu_hotspot_c:.1f}°C")
+            if reading.gpu_mem_c is not None:
+                print(f"  GPU memory: {reading.gpu_mem_c:.1f}°C")
+            if reading.power_w is not None:
+                print(f"  Power: {reading.power_w:.1f} W")
+            if reading.fan_rpm is not None:
+                print(f"  Fan: {reading.fan_rpm} RPM")
+            if reading.vram_used_bytes is not None and reading.vram_total_bytes is not None:
+                used_gb = reading.vram_used_bytes / (1024**3)
+                total_gb = reading.vram_total_bytes / (1024**3)
+                print(f"  VRAM: {used_gb:.1f} GB / {total_gb:.1f} GB")
+
+            if reading.missing:
+                print(f"  Missing: {', '.join(reading.missing)}")
+
+    return 0
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     """Run interactive setup wizard."""
     return run_setup_wizard()
@@ -593,6 +758,24 @@ def main(argv: list[str] | None = None) -> int:
     p_status = subparsers.add_parser("status", help="Show current instance status")
     p_status.add_argument("--json", action="store_true", help="Output as JSON")
     p_status.set_defaults(func=cmd_status)
+
+    # telemetry
+    p_telemetry = subparsers.add_parser(
+        "telemetry",
+        help="One-shot sensor probe or session summary",
+    )
+    p_telemetry.add_argument("--json", action="store_true", help="Output as JSON")
+    p_telemetry.add_argument(
+        "--session",
+        action="store_true",
+        help="Show last session summary instead of live probe",
+    )
+    p_telemetry.add_argument(
+        "--gc",
+        action="store_true",
+        help="Garbage collect old telemetry data (>14 days)",
+    )
+    p_telemetry.set_defaults(func=cmd_telemetry)
 
     # exec
     p_exec = subparsers.add_parser("exec", help="Execute command in sandbox")

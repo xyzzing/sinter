@@ -57,6 +57,30 @@ class ProfileSpec:
 
 
 @dataclass
+class SentinelConfig:
+    """Sentinel telemetry configuration."""
+    sample_hz: float = 1.0
+    warn_hotspot_c: float = 95.0
+    critical_hotspot_c: float = 105.0
+    critical_hold_s: int = 8
+    auto_stop_on_critical: bool = False
+    assume_power_w: Optional[float] = None
+    wall_energy_path: Optional[str] = None
+
+
+@dataclass
+class AccountingConfig:
+    """Local operational accounting configuration (estimates only)."""
+    currency: str = "USD"
+    electricity_tariff_per_kwh: Optional[float] = None
+    emissions_region: str = ""
+    emissions_factor_kgco2e_per_kwh: Optional[float] = None
+    emissions_factor_source: str = ""
+    emissions_factor_version: str = ""
+    allow_assumed_power: bool = False
+
+
+@dataclass
 class SinterConfig:
     """Top-level SINTER configuration."""
     profiles: dict[str, ProfileSpec] = field(default_factory=dict)
@@ -66,6 +90,8 @@ class SinterConfig:
     state_dir: Path = DEFAULT_STATE_DIR
     data_dir: Path = DEFAULT_DATA_DIR
     cache_dir: Path = DEFAULT_CACHE_DIR
+    sentinel: SentinelConfig = field(default_factory=SentinelConfig)
+    accounting: AccountingConfig = field(default_factory=AccountingConfig)
 
 
 def load_config(config_path: Optional[Path] = None) -> SinterConfig:
@@ -118,6 +144,55 @@ def load_config(config_path: Optional[Path] = None) -> SinterConfig:
         config.profiles[alias] = profile
 
     config.default_profile = raw.get("default_profile", config.default_profile)
+
+    # Parse sentinel configuration
+    sentinel_raw = raw.get("sentinel", {})
+    if sentinel_raw:
+        s = config.sentinel
+        config.sentinel = SentinelConfig(
+            sample_hz=float(sentinel_raw.get("sample_hz", s.sample_hz)),
+            warn_hotspot_c=float(sentinel_raw.get("warn_hotspot_c", s.warn_hotspot_c)),
+            critical_hotspot_c=float(sentinel_raw.get("critical_hotspot_c", s.critical_hotspot_c)),
+            critical_hold_s=int(sentinel_raw.get("critical_hold_s", s.critical_hold_s)),
+            auto_stop_on_critical=bool(
+                sentinel_raw.get("auto_stop_on_critical", s.auto_stop_on_critical)
+            ),
+            assume_power_w=(
+                float(sentinel_raw["assume_power_w"])
+                if sentinel_raw.get("assume_power_w")
+                else None
+            ),
+            wall_energy_path=sentinel_raw.get("wall_energy_path"),
+        )
+
+    # Parse accounting configuration
+    accounting_raw = raw.get("accounting", {})
+    if accounting_raw:
+        a = config.accounting
+        config.accounting = AccountingConfig(
+            currency=accounting_raw.get("currency", a.currency),
+            electricity_tariff_per_kwh=(
+                float(accounting_raw["electricity_tariff_per_kwh"])
+                if accounting_raw.get("electricity_tariff_per_kwh")
+                else None
+            ),
+            emissions_region=accounting_raw.get("emissions_region", a.emissions_region),
+            emissions_factor_kgco2e_per_kwh=(
+                float(accounting_raw["emissions_factor_kgco2e_per_kwh"])
+                if accounting_raw.get("emissions_factor_kgco2e_per_kwh")
+                else None
+            ),
+            emissions_factor_source=accounting_raw.get(
+                "emissions_factor_source", a.emissions_factor_source
+            ),
+            emissions_factor_version=accounting_raw.get(
+                "emissions_factor_version", a.emissions_factor_version
+            ),
+            allow_assumed_power=bool(
+                accounting_raw.get("allow_assumed_power", a.allow_assumed_power)
+            ),
+        )
+
     return config
 
 

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Sentinel telemetry** — session-scoped temperature, power, energy monitoring
+- Energy measurement tiers (wall-meter, hwmon counter, power integration, assumed)
+- Optional electricity cost and CO₂e estimates via `[accounting]` config
+- Thermal policy with advisory warnings and optional critical stop
+- `sinter telemetry` command (one-shot probe, session summary, garbage collection)
+- `sinter status` now includes live telemetry quality and readings
+- `sinter doctor` includes one-shot sensor probe
 - Backend version and feature detection
 - Context size benchmarking (`sinter bench`)
 - Backend update management (`sinter update --backend`)

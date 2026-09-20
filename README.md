@@ -101,12 +101,37 @@ See [docs/configuration.md](docs/configuration.md) for complete configuration re
 | `sinter plan <profile>` | Show requested vs effective settings |
 | `sinter up <profile>` | Start llama-server |
 | `sinter down` | Stop llama-server |
-| `sinter status` | Show instance status |
+| `sinter status` | Show instance status (includes telemetry) |
+| `sinter telemetry` | One-shot sensor probe |
+| `sinter telemetry --session` | Last session summary |
 | `sinter bench <profile>` | Benchmark performance |
 | `sinter update --backend` | Update llama.cpp backend |
 | `sinter exec --sandbox <cmd>` | Run command in sandbox |
 
 All commands support `--json` for structured output.
+
+## Observability (Sentinel)
+
+Sinter includes **Sentinel**, a session-scoped telemetry system for monitoring temperature, power, and energy consumption during inference sessions.
+
+```bash
+# One-shot sensor probe
+sinter telemetry
+
+# Session summary with energy/cost
+sinter telemetry --session
+
+# Status includes live telemetry
+sinter status
+```
+
+Sentinel provides:
+- Temperature monitoring (edge, hotspot, memory)
+- Power and energy measurement with quality tiers
+- Optional electricity cost and CO₂e estimates
+- Thermal policy with advisory warnings
+
+See [docs/sentinel.md](docs/sentinel.md) for configuration and details.
 
 ## Architecture
 
