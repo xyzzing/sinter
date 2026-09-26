@@ -30,6 +30,9 @@ sinter = "sinter.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "real_hardware: requires the real GPU/backend; skipped in CI",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/sinter"]

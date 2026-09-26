@@ -1,0 +1,337 @@
+# == @deepseek-ai/dsh-base
+- id: tool-plugin-manager
+  name: '@deepseek-ai/dsh-plugin-manager/tools'
+  disabled: true
+- id: plugin-manager
+  name: '@deepseek-ai/dsh-plugin-manager'
+  disabled: !!js '!ctx.get(''profileContext'')'
+- id: timer
+  name: '@deepseek-ai/cordis-plugin-timer'
+- id: hmr
+  name: '@deepseek-ai/dsh-hmr'
+  disabled: !!js '!ctx.get(''profileContext'')'
+  config:
+    root: []
+- id: llm
+  name: '@deepseek-ai/dsh-llm'
+- id: deepseek-llm-api-extensions
+  name: '@deepseek-ai/dsh-deepseek-llm-api-extensions'
+- id: session
+  name: '@deepseek-ai/dsh-session'
+- id: session-log-deepseek
+  name: '@deepseek-ai/dsh-session-log-deepseek'
+- id: typert
+  name: '@deepseek-ai/dsh-typert-registry'
+- id: typert-loader
+  name: '@deepseek-ai/dsh-typert-loader'
+- id: typert-gateway
+  name: '@deepseek-ai/dsh-api-gateway'
+- id: session-title
+  name: '@deepseek-ai/dsh-session-title'
+  config:
+    fallbackMaxWords: 5
+    fallbackMaxBytes: 40
+    maxTitleBytes: 80
+- id: session-title-llm
+  name: '@deepseek-ai/dsh-session-title-first-prompt-llm'
+  config:
+    targetWords: 5
+    targetCjkCharacters: 10
+    maxInputBytes: 4096
+    maxOutputTokens: 64
+    timeoutMs: 60000
+- id: user-questions
+  name: '@deepseek-ai/dsh-user-questions'
+- id: agent
+  name: '@deepseek-ai/dsh-agent'
+- id: plugin-package-inventory-deepseek
+  name: '@deepseek-ai/dsh-plugin-package-inventory-deepseek'
+# == @deepseek-ai/dsh-base, patched by /TMP-DSH/profiles/web/cordis.patch.yml
+- id: agent-default-model
+  name: '@deepseek-ai/dsh-agent-default-model'
+  config:
+    provider: deepseek-official
+    model: deepseek-flash
+    reasoningEffort: high
+# == @deepseek-ai/dsh-base
+- id: jobs
+  name: '@deepseek-ai/dsh-jobs-local'
+- id: llm-retry
+  name: '@deepseek-ai/dsh-llm-retry'
+- id: config-editor
+  name: '@deepseek-ai/dsh-config-editor'
+  disabled: !!js '!ctx.get(''profileContext'')'
+- id: settings
+  name: '@deepseek-ai/dsh-settings'
+  disabled: !!js '!ctx.get(''profileContext'')'
+- id: authorization
+  name: '@deepseek-ai/dsh-authorization'
+- id: deepseek-account
+  name: '@deepseek-ai/dsh-deepseek-account-platform'
+  config:
+    desktopPlatform: !!js >-
+      ctx.get('profileContext')?.name === 'desktop' && ['darwin',
+      'win32'].includes(process.platform) ? process.platform : null
+- id: credentials
+  name: '@deepseek-ai/dsh-credentials-local'
+# == @deepseek-ai/dsh-base, patched by /TMP-DSH/profiles/web/cordis.patch.yml
+- id: llm-pi-ai
+  name: '@deepseek-ai/dsh-llm-pi-ai'
+  config:
+    providers:
+      minder:
+        displayName: Minder (Turnstile escalation watchdog)
+        api: openai-completions
+        baseURL: http://127.0.0.1:8390/v1
+        apiKeyEnv: LOCAL_LLAMA_KEY
+        defaultContextWindow: 32768
+        models:
+          - id: qwen-exec
+            name: Qwen Exec (minder)
+            contextWindow: 98304
+            maxTokens: 8192
+          - id: qwen-think
+            name: Qwen Think (minder)
+            contextWindow: 98304
+            maxTokens: 32768
+          - id: qwen-auto
+            name: qwen-auto (minder)
+            contextWindow: 98304
+            maxTokens: 32768
+            reasoningEfforts:
+              'off': 'off'
+              low: low
+              medium: medium
+              xhigh: xhigh
+          - id: frontier
+            name: Frontier (minder)
+            contextWindow: 98304
+            maxTokens: 8192
+      local:
+        apiKeyEnv: LOCAL_LLAMA_KEY
+        displayName: Local llama.cpp (GPU)
+        api: openai-completions
+        baseURL: http://127.0.0.1:8080/v1
+        models:
+          - id: local-bench-model
+            name: LocalBenchModel
+            contextWindow: 98304
+            maxTokens: 16356
+            reasoningEfforts:
+              'off': none
+              low: low
+              medium: medium
+              high: xhigh
+              max: xhigh
+        defaultContextWindow: 32768
+# == @deepseek-ai/dsh-base
+- id: session-persistence-jsonl
+  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  config:
+    root: !!js dshHomePath('sessions')
+- id: attachment-local
+  name: '@deepseek-ai/dsh-attachment-local'
+- id: session-query-sqlite
+  name: '@deepseek-ai/dsh-session-query-sqlite'
+  config:
+    path: ':memory:'
+    openAt: never
+- id: session-projection
+  name: '@deepseek-ai/dsh-session-projection'
+- id: storage
+  name: '@deepseek-ai/dsh-storage'
+- id: storage-json
+  name: '@deepseek-ai/dsh-storage-json'
+  config:
+    root: !!js dshHomePath('storages')
+- id: storage-domain
+  name: '@deepseek-ai/dsh-storage-domain'
+  config:
+    backend: json
+- id: session-projection-cache
+  name: '@deepseek-ai/dsh-session-projection-cache'
+  config:
+    writeEveryEvents: 200
+    writeIntervalMs: 5000
+- id: session-telemetry-otel
+  name: '@deepseek-ai/dsh-session-telemetry-otel'
+  config:
+    mode: !!js process.env.DSH_TELEMETRY_MODE || 'FEEDBACK_ONLY'
+    shutdownTimeoutMillis: 3000
+    exporter:
+      url: !!js >-
+        process.env.DSH_TELEMETRY_OTLP_URL ??
+        'https://harness-telemetry.deepseeksvc.com/v1/logs'
+      compression: gzip
+      timeoutMillis: 1000
+    processor:
+      scheduledDelayMillis: 10000
+      maxQueueSize: 2048
+      maxExportBatchSize: 2048
+      exportTimeoutMillis: 1500
+- id: subprocess
+  name: '@deepseek-ai/dsh-subprocess-local'
+- id: sandbox
+  name: '@deepseek-ai/dsh-sandbox-local'
+- id: sandbox-policy
+  name: '@deepseek-ai/dsh-sandbox-policy'
+  config:
+    mode: !!js process.env.DSH_PERMISSION_MODE ?? 'workspace-write'
+    workspaceRoot: !!js process.cwd()
+- id: bash-sandbox
+  name: '@deepseek-ai/dsh-bash-sandbox'
+  disabled: !!js process.platform === 'win32'
+  config:
+    timeoutMs: 60000
+- id: pwsh-sandbox
+  name: '@deepseek-ai/dsh-pwsh-sandbox'
+  disabled: !!js process.platform !== 'win32'
+- id: approval
+  name: '@deepseek-ai/dsh-user-approval'
+  config:
+    policy: !!js >-
+      (process.env.DSH_PERMISSION_MODE ?? 'workspace-write') ===
+      'danger-full-access' ? 'never' : 'ask'
+# == @deepseek-ai/dsh-web-app, patched by /TMP-DSH/profiles/web/cordis.patch.yml
+- id: webserver
+  name: '@deepseek-ai/dsh-host-webserver'
+  inject:
+    - webStartup
+  config:
+    host: 0.0.0.0
+    port: 3080
+    compression: gzip
+    compressionLevel: 1
+    compressionThresholdBytes: 1024
+# == @deepseek-ai/dsh-web-app
+- id: web-runtime
+  name: '@deepseek-ai/dsh-web-app'
+  inject:
+    - webStartup
+  config:
+    openBrowser: !!js ctx.webStartup.openBrowser
+    printUrl: true
+    surfaceContext: true
+    trustedHosts: !!js ctx.webStartup.trustedHosts
+- id: client-hmr
+  name: '@deepseek-ai/dsh-client-hmr'
+- id: modules
+  name: '@deepseek-ai/dsh-client-modules'
+- id: connection
+  name: '@deepseek-ai/dsh-client-connection'
+  inject:
+    - webRuntime
+  config:
+    trustedHosts: !!js ctx.webRuntime.trustedHosts
+- id: file-upload
+  name: '@deepseek-ai/dsh-client-file-upload'
+- id: api-remotes
+  name: '@deepseek-ai/dsh-api-remotes'
+- id: cordis-client-runner
+  name: '@deepseek-ai/dsh-cordis-client-runner'
+- id: ui-theme
+  name: '@deepseek-ai/dsh-client-ui-theme'
+- id: locale
+  name: '@deepseek-ai/dsh-client-locale'
+- id: shortcuts
+  name: '@deepseek-ai/dsh-client-shortcuts'
+- id: ui-shortcuts
+  name: '@deepseek-ai/dsh-client-ui-shortcuts'
+- id: ui-layout
+  name: '@deepseek-ai/dsh-client-ui-layout'
+- id: ui-renderer
+  name: '@deepseek-ai/dsh-client-ui-renderer'
+- id: ui-session
+  name: '@deepseek-ai/dsh-client-ui-session'
+- id: resources
+  name: '@deepseek-ai/dsh-client-resources'
+- id: ui-sidebar
+  name: '@deepseek-ai/dsh-client-ui-sidebar'
+- id: ui-sidebar-right
+  name: '@deepseek-ai/dsh-client-ui-sidebar-right'
+- id: office-to-pdf
+  name: '@deepseek-ai/dsh-office-to-pdf'
+- id: ui-sidebar-documentpreview
+  name: '@deepseek-ai/dsh-client-ui-sidebar-documentpreview'
+- id: ui-sidebar-browser
+  name: '@deepseek-ai/dsh-client-ui-sidebar-browser'
+  disabled: !!js ctx.get('profileContext')?.name !== 'desktop'
+- id: ui-sidebar-terminal
+  name: '@deepseek-ai/dsh-client-ui-sidebar-terminal'
+- id: ui-sidebar-files
+  name: '@deepseek-ai/dsh-client-ui-sidebar-files'
+- id: ui-settings
+  name: '@deepseek-ai/dsh-client-ui-settings'
+# == @deepseek-ai/dsh-web-app, patched by /TMP-DSH/profiles/web/cordis.patch.yml
+- id: ui-settings-general
+  name: '@deepseek-ai/dsh-client-ui-settings-general'
+  config:
+    welcomeNoticeVersion: 2026-08-13.1
+# == dshmarket
+- id: dsh-market
+  name: dshmarket
+# == @nanmicoder/dsh-agent-teams
+- id: agent-teams
+  name: '@nanmicoder/dsh-agent-teams'
+  config:
+    stateDir: .agent-teams
+    memberProvider: spawn
+# == dsh-model-pin
+- id: model-pin
+  name: dsh-model-pin
+  config:
+    providers: {}
+# == dsh-context-budget
+- id: context-budget
+  name: dsh-context-budget
+  config:
+    providers: {}
+# == dsh-capability-toggle-plugin
+- id: dsh-capability-toggle-plugin
+  name: dsh-capability-toggle-plugin
+# == @dsh-external/donsetch
+- id: donsetch
+  name: '@dsh-external/donsetch'
+  config:
+    toolPrefix: donsetch
+# == dsh-tool-call-guard
+- id: tool-call-guard
+  name: dsh-tool-call-guard
+# == @xiaoyuyu6420/dsh-backup
+- id: dsh-backup
+  name: '@xiaoyuyu6420/dsh-backup'
+# == dsh-housekeeper
+- id: housekeeper
+  name: dsh-housekeeper
+# == dsh-doctor, patched by /TMP-DSH/profiles/web/cordis.patch.yml
+- id: dsh-doctor
+  name: dsh-doctor
+  disabled: true
+# == dsh-client-auto-continue
+- id: auto-continue
+  name: dsh-client-auto-continue
+# == dsh-messages-sanitizer
+- id: messages-sanitizer
+  name: dsh-messages-sanitizer
+# == /TMP-DSH/profiles/web/cordis.patch.yml
+- name: >-
+    file:///TMP-DSH/profiles/web/minder-bridge-loader.mjs
+  config:
+    configPath: /TMP-DSH/share/minder/dsh/hooks.json
+    defaultTimeoutMs: 600000
+- id: mcp-citra
+  name: '@deepseek-ai/dsh-mcp-client'
+  config:
+    serverName: citra
+    transport: stdio
+    command: npx
+    args:
+      - '-y'
+      - '@sylphx/citra'
+    failOnStartupError: true
+- name: >-
+    file:///TMP-DSH/profiles/web/ponytail-bridge-loader.mjs
+  config:
+    configPath: /TMP-DSH/share/ponytail/hooks/dsh-hooks.json
+    pluginRoot: /TMP-DSH/share/ponytail
+    defaultTimeoutMs: 5000

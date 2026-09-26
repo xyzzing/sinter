@@ -1,0 +1,48 @@
+{
+  "systems": [
+    {
+      "name": "stub-agent",
+      "transport": "process",
+      "command": [
+        "python3",
+        "tests/fixtures/stub_agent.py",
+        "{prompt}"
+      ],
+      "notes": "No model and no network: exercises the harness itself, so a green run here proves the runner works and nothing about model quality."
+    },
+    {
+      "name": "local-http",
+      "transport": "http",
+      "base_url": "http://127.0.0.1:8080/v1",
+      "model": "local",
+      "model_route": "local",
+      "notes": "Model-only baseline over the running llama-server: no agent scaffold, no tools."
+    },
+    {
+      "name": "local-ponytail-off",
+      "transport": "process",
+      "command": [
+        "dsh",
+        "--profile",
+        "bench",
+        "--patch",
+        "profiles/ponytail-off.yml",
+        "{prompt}"
+      ],
+      "profile": "bench",
+      "notes": "dsh bench profile with the ponytail hook tier disabled by an overlay. One declared difference from the on-arm, so the lane-set delta is exactly the variable under test."
+    },
+    {
+      "name": "local-ponytail-on",
+      "transport": "process",
+      "command": [
+        "dsh",
+        "--profile",
+        "bench",
+        "{prompt}"
+      ],
+      "profile": "bench",
+      "notes": "dsh bench profile with the ponytail hook tier enabled. Ponytail only injects prompt context; it never denies a tool call, so this measures context on/off, not enforcement."
+    }
+  ]
+}

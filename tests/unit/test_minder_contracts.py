@@ -8,8 +8,7 @@ from __future__ import annotations
 
 from dataclasses import fields
 
-from sinter.contracts import (InferenceGrant, InferenceIntent,
-                              RuntimeSnapshot, evaluate_intent)
+from sinter.contracts import InferenceGrant, InferenceIntent, RuntimeSnapshot, evaluate_intent
 from sinter.telemetry import TelemetryState
 
 

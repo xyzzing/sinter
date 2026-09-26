@@ -48,6 +48,8 @@ sinter.egg-info/
 
 # Local development
 .dsh/
+.benchstate/
+.wsprobe/
 .agent-teams/
 graft/
 all_files.txt

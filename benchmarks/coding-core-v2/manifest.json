@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "suite_id": "coding-core-v2",
+  "domain": "coding",
+  "title": "Coding core governed task suite (v2)",
+  "description": "End-to-end coding tasks graded by the repository's own tests. Ports the two fixtures proven in minder/benchmarks/coding-core-v1 and adds a fixture-repair task. Grading is a pytest run the harness performs in a fresh workspace; the agent's own report is never the evidence.",
+  "tasks": [
+    {
+      "task_id": "t3_keyerror_default",
+      "kind": "coding",
+      "title": "Fix a missing-dict-default KeyError that traps the agent in a retry loop",
+      "kickoff": "tasks/keyerror_default/kickoff.md",
+      "fixtures": [
+        "tasks/keyerror_default/task.py",
+        "tasks/keyerror_default/test_task.py"
+      ],
+      "graders": [
+        {
+          "type": "pytest",
+          "entry": [
+            "tasks/keyerror_default/test_task.py"
+          ]
+        },
+        {
+          "type": "command",
+          "argv": [
+            "python3",
+            "-m",
+            "pytest",
+            "-q",
+            "--rootdir",
+            "tasks/keyerror_default",
+            "-c",
+            "pytest.ini",
+            "tasks/keyerror_default/test_task.py"
+          ]
+        }
+      ],
+      "expected": "tests_pass",
+      "budgets": {
+        "wall_seconds": 900,
+        "token_budget": 40000,
+        "max_turns": 25
+      }
+    },
+    {
+      "task_id": "t3_assertion_expectation",
+      "kind": "coding",
+      "title": "Fix an off-by-one so the assertion matches the expectation",
+      "kickoff": "tasks/assertion_expectation/kickoff.md",
+      "fixtures": [
+        "tasks/assertion_expectation/task.py",
+        "tasks/assertion_expectation/test_task.py"
+      ],
+      "graders": [
+        {
+          "type": "pytest",
+          "entry": [
+            "tasks/assertion_expectation/test_task.py"
+          ]
+        }
+      ],
+      "expected": "tests_pass",
+      "budgets": {
+        "wall_seconds": 900,
+        "token_budget": 40000,
+        "max_turns": 25
+      }
+    }
+  ]
+}

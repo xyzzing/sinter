@@ -1,0 +1,2 @@
+dsh: skipping profile bundle "dsh-context-guard": Error: dsh: cannot resolve profile bundle "dsh-context-guard" from the dsh installation or /TMP-DSH/profiles/headless; run 'dsh plugin --profile headless install' if its dependency is not installed
+dsh: skipping profile bundle "dsh-task-budget-gate": Error: dsh: cannot resolve profile bundle "dsh-task-budget-gate" from the dsh installation or /TMP-DSH/profiles/headless; run 'dsh plugin --profile headless install' if its dependency is not installed

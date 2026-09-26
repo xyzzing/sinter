@@ -105,7 +105,16 @@ See [docs/configuration.md](docs/configuration.md) for complete configuration re
 | `sinter status` | Show instance status (includes telemetry) |
 | `sinter telemetry` | One-shot sensor probe |
 | `sinter telemetry --session` | Last session summary |
-| `sinter bench <profile>` | Benchmark performance |
+| `sinter bench <profile>` | Throughput benchmark (`bench perf <profile>`) |
+| `sinter bench lane list` | Inventory installed toolchain lanes |
+| `sinter bench lane snapshot` | Record a lane snapshot for later diffing |
+| `sinter bench lane diff <a> <b>` | Show what changed between snapshots |
+| `sinter bench lane verify` | Check that declared lanes actually activate |
+| `sinter bench system list` | List systems under test |
+| `sinter bench suite list` | List benchmark suites |
+| `sinter bench suite validate <id>` | Validate a suite manifest |
+| `sinter bench suite run --suite <id> --system <name> --execute` | Run a suite and write a report |
+| `sinter bench compare --baseline <a> --candidate <b>` | Compare reports, attribute to lanes |
 | `sinter update --backend` | Update llama.cpp backend |
 | `sinter ramdisk status` | Show RAM disk status |
 | `sinter ramdisk list` | List models on RAM disk |
@@ -114,6 +123,46 @@ See [docs/configuration.md](docs/configuration.md) for complete configuration re
 | `sinter exec --sandbox <cmd>` | Run command in sandbox |
 
 All commands support `--json` for structured output.
+
+## Benchmarking (Compass)
+
+Sinter's benchmark answers three questions that a tokens-per-second number
+cannot: **did the model finish real work**, **what did the installed toolchain
+contribute**, and **what did the run cost**.
+
+Every run is scored against an artifact the agent did not author — repository
+tests, a recomputed number, a citation that must resolve inside a supplied
+corpus. The agent's own report is never the evidence.
+
+```bash
+# What is actually installed? One record per enhancement, plus a stable hash.
+sinter bench lane list --profile web
+
+# Did those enhancements actually take effect at run time? dsh hooks fail open
+# and silently, so an active-but-inert lane is reported rather than credited.
+sinter bench lane verify --profile web
+
+# Plan a suite without running anything, then run it.
+sinter bench suite run --suite coding-core-v2 --system stub-agent
+sinter bench suite run --suite coding-core-v2 --system stub-agent --execute
+
+# A/B two arms and attribute the difference per lane.
+sinter bench lane snapshot
+sinter bench compare --baseline a.json --candidate b.json --attribute marginal \
+    --arm ponytail=b.json
+```
+
+Every report records the suite fingerprint, the system, the **lane-set hash**,
+and the limitations of each grader that produced it. Two reports whose lane
+sets differ are not silently compared, and a run with too few samples reports
+`INSUFFICIENT_SAMPLE` rather than a result.
+
+### What the graders cannot prove
+
+`checklist` and `claims` are pattern assertions, not judgement; `schema` checks
+shape; `recompute` checks arithmetic, not model design. Each grader's limitation
+travels with its verdict into the report, so a pass can be weighed for what it
+is.
 
 ## Observability (Sentinel)
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from sinter import __version__
 from sinter.backend import detect_features, format_backend_info
@@ -583,6 +584,24 @@ def cmd_exec(args: argparse.Namespace) -> int:
 
 
 def cmd_bench(args: argparse.Namespace) -> int:
+    """Dispatch a bench subcommand."""
+    bench_command = getattr(args, "bench_command", None)
+    if bench_command == "lane":
+        return cmd_bench_lane(args)
+    if bench_command == "system":
+        return cmd_bench_system(args)
+    if bench_command == "compare":
+        return cmd_bench_compare(args)
+    if bench_command == "suite":
+        return cmd_bench_suite(args)
+    if bench_command == "perf":
+        return cmd_bench_profile(args)
+    print(f"Error: unknown bench subcommand {bench_command!r}",
+          file=sys.stderr)
+    return 2
+
+
+def cmd_bench_profile(args: argparse.Namespace) -> int:
     """Benchmark a profile for performance and context size."""
     config = load_config()
     if args.profile not in config.profiles:
@@ -622,6 +641,337 @@ def cmd_bench(args: argparse.Namespace) -> int:
         print(format_bench_output(results))
 
     return 0
+
+
+def cmd_bench_compare(args: argparse.Namespace) -> int:
+    """Compare report files, optionally attributing the difference to lanes."""
+    from sinter.compare import (
+        CompareError,
+        attribute_interaction,
+        attribute_marginal,
+        attribute_total,
+        format_attribution,
+        load_reports,
+    )
+
+    mode = getattr(args, "attribute", None)
+    try:
+        if mode == "total":
+            baseline, full = load_reports([args.baseline, args.candidate])
+            attribution = attribute_total(baseline, full)
+        elif mode == "marginal":
+            baseline = load_reports([args.baseline])[0]
+            arms = {}
+            for spec in args.arm or []:
+                if "=" not in spec:
+                    print(f"Error: --arm needs LANE=REPORT, got {spec!r}",
+                          file=sys.stderr)
+                    return 2
+                lane, path = spec.split("=", 1)
+                arms[lane] = load_reports([path])[0]
+            if not arms:
+                print("Error: marginal attribution needs at least one "
+                      "--arm LANE=REPORT", file=sys.stderr)
+                return 2
+            attribution = attribute_marginal(baseline, arms)
+        elif mode == "interaction":
+            baseline, full = load_reports([args.baseline, args.candidate])
+            members = {}
+            for spec in args.member or []:
+                if "=" not in spec:
+                    print(f"Error: --member needs LANE=REPORT, got {spec!r}",
+                          file=sys.stderr)
+                    return 2
+                lane, path = spec.split("=", 1)
+                members[lane] = load_reports([path])[0]
+            attribution = attribute_interaction(members, group=full)
+        else:
+            baseline, candidate = load_reports([args.baseline,
+                                                args.candidate])
+            attribution = attribute_total(baseline, candidate)
+    except CompareError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    payload = attribution.to_dict()
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(format_attribution(payload))
+
+    verdicts = {c.verdict for c in attribution.comparisons}
+    if "FAIL" in verdicts:
+        return 1
+    # A run that proves nothing must not exit successfully: INSUFFICIENT_SAMPLE
+    # and NON_COMPARABLE are inconclusive, not passing.
+    if not attribution.comparisons or verdicts & {"INSUFFICIENT_SAMPLE",
+                                                  "NON_COMPARABLE"}:
+        return 2
+    return 0
+
+
+def cmd_bench_system(args: argparse.Namespace) -> int:
+    """List the systems declared for benchmark runs."""
+    from sinter.systems import SystemError, load_systems
+
+    root = Path(args.root) if getattr(args, "root", None) else None
+    try:
+        systems = load_systems(root)
+    except SystemError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(json.dumps({"systems": [s.to_dict() for s in systems]},
+                         indent=2))
+        return 0
+    if not systems:
+        print("No systems declared (benchmarks/systems.json is missing).")
+        return 0
+    for system in systems:
+        print(f"  {system.name:20s} {system.transport:8s} "
+              f"{system.profile or system.base_url or ''}")
+        for error in system.validate():
+            print(f"      invalid: {error}")
+        if system.notes:
+            print(f"      {system.notes}")
+    return 0
+
+
+def cmd_bench_lane(args: argparse.Namespace) -> int:
+    """Inventory, snapshot, diff or verify toolchain lanes."""
+    from sinter.lanes import (
+        LaneError,
+        collect,
+        diff_snapshots,
+        read_snapshot,
+        write_snapshot,
+    )
+
+    lane_command = getattr(args, "lane_command", "")
+    if lane_command == "diff":
+        try:
+            before = read_snapshot(Path(args.before))
+            after = read_snapshot(Path(args.after))
+        except LaneError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        changes = diff_snapshots(before, after)
+        if args.json:
+            print(json.dumps({
+                "before_hash": before.get("lane_set_hash"),
+                "after_hash": after.get("lane_set_hash"),
+                "changes": [change.to_dict() for change in changes],
+            }, indent=2))
+            return 0
+        if not changes:
+            print("No lane differences.")
+            return 0
+        print(f"{len(changes)} lane change(s):")
+        for change in changes:
+            print(f"  {change.change:8s} {change.lane_id}")
+            for field, values in sorted(change.fields.items()):
+                print(f"      {field}: {values[0]!r} -> {values[1]!r}")
+        return 0
+
+    dsh_home = Path(args.dsh_home) if getattr(args, "dsh_home", None) else None
+    workspace = Path(args.workspace) if getattr(args, "workspace", None) else None
+    kinds = getattr(args, "kind", None)
+    try:
+        lane_set = collect(args.profile, home=dsh_home, workspace=workspace,
+                           dump=not getattr(args, "no_dump", False))
+    except LaneError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if kinds:
+        wanted = set(kinds)
+        lane_set.lanes = [lane for lane in lane_set.lanes
+                          if lane.kind in wanted]
+
+    if lane_command == "snapshot":
+        out_dir = Path(args.out) if getattr(args, "out", None) else None
+        path = write_snapshot(lane_set, out_dir)
+        if args.json:
+            print(json.dumps({"path": str(path),
+                              "lane_set_hash": lane_set.lane_set_hash()},
+                             indent=2))
+        else:
+            print(f"Wrote {path}")
+            print(f"lane_set_hash: {lane_set.lane_set_hash()}")
+        return 0
+
+    if lane_command == "verify":
+        problems = lane_set.warnings()
+        payload = {
+            "profile": lane_set.profile,
+            "lane_set_hash": lane_set.lane_set_hash(),
+            "active_lanes": len(lane_set.active()),
+            "problems": problems,
+            "errors": lane_set.errors,
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2))
+        else:
+            print(f"Profile: {lane_set.profile}")
+            print(f"Active lanes: {len(lane_set.active())} "
+                  f"of {len(lane_set.lanes)}")
+            for problem in problems:
+                print(f"  warn: {problem}")
+            for error in lane_set.errors:
+                print(f"  error: {error}")
+            if not problems and not lane_set.errors:
+                print("No lane problems detected.")
+        return 0
+
+    if args.json:
+        print(json.dumps(lane_set.to_dict(), indent=2))
+        return 0
+    print(f"Toolchain lanes for profile '{lane_set.profile}' "
+          f"(hash {lane_set.lane_set_hash()[:12]}):")
+    for lane in lane_set.lanes:
+        mark = " " if lane.declared == "active" else "-"
+        print(f"  {mark} {lane.kind:12s} {lane.lane_id.split(':', 1)[1]}")
+        if lane.detail:
+            print(f"      {lane.detail}")
+    for problem in lane_set.warnings():
+        print(f"  warn: {problem}")
+    for error in lane_set.errors:
+        print(f"  error: {error}")
+    return 0
+
+
+def cmd_bench_suite(args: argparse.Namespace) -> int:
+    """List, validate, plan or execute benchmark suites."""
+    from sinter.suites import SuiteError, list_suites, load_suite, plan_run
+
+    suite_command = getattr(args, "suite_command", "")
+    root = Path(args.root) if getattr(args, "root", None) else None
+    suite_id = getattr(args, "suite", None) or getattr(args, "suite_id", None)
+
+    if suite_command == "list":
+        rows = list_suites(root)
+        if args.json:
+            print(json.dumps({"suites": rows}, indent=2))
+            return 0
+        if not rows:
+            print("No suites found.")
+            return 0
+        for row in rows:
+            print(f"  {row['suite_id']:22s} tasks={row['tasks']:<4} "
+                  f"{row['status']}")
+        return 0
+
+    try:
+        suite = load_suite(suite_id, root)
+    except SuiteError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if suite_command == "validate":
+        if args.json:
+            print(json.dumps({"suite_id": suite.suite_id,
+                              "valid": not suite.errors,
+                              "errors": suite.errors,
+                              "suite_fingerprint": suite.fingerprint()},
+                             indent=2))
+        elif suite.errors:
+            print(f"Suite '{suite.suite_id}' is invalid:")
+            for error in suite.errors:
+                print(f"  - {error}")
+        else:
+            print(f"Suite '{suite.suite_id}' is valid "
+                  f"({len(suite.tasks)} tasks, "
+                  f"fingerprint {suite.fingerprint()[:12]}).")
+        return 1 if suite.errors else 0
+
+    if getattr(args, "execute", False):
+        return _execute_suite(args, suite)
+
+    plan = plan_run(suite, task_id=getattr(args, "task", None),
+                    system=getattr(args, "system", None),
+                    runs=getattr(args, "runs", 1))
+    if args.json:
+        print(json.dumps(plan, indent=2))
+        return 0
+    print(f"Suite: {suite.suite_id} ({suite.domain}, "
+          f"{len(suite.tasks)} tasks)")
+    print(f"Fingerprint: {suite.fingerprint()}")
+    print(f"System: {plan['system'] or '(unset)'}")
+    print(f"Runs per task: {plan['runs']}")
+    print(f"Planned tasks: {len(plan['tasks'])}")
+    for entry in plan["tasks"]:
+        print(f"  {entry['task_id']:28s} {entry['kind']:18s} "
+              f"graders={','.join(entry['graders']) or 'none'}")
+    for note in plan.get("notes") or []:
+        print(f"  note: {note}")
+    return 0
+
+
+def _execute_suite(args: argparse.Namespace, suite) -> int:
+    """Run a suite for real, then write a report bound to the lane inventory."""
+    from sinter.lanes import LaneError, collect, write_snapshot
+    from sinter.report import build_report, format_report
+    from sinter.runner import RunnerConfig, RunnerError, preflight, run_suite
+    from sinter.systems import SystemError, find_system, lane_profile_for
+
+    system_name = getattr(args, "system", None)
+    if not system_name:
+        print("Error: --execute requires --system NAME", file=sys.stderr)
+        return 2
+    root = Path(args.root) if getattr(args, "root", None) else None
+    try:
+        system = find_system(system_name, root)
+    except SystemError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    problems = preflight(system)
+    if problems:
+        for problem in problems:
+            print(f"Error: {problem}", file=sys.stderr)
+        return 1
+
+    runner_config = RunnerConfig(
+        keep_workspace=getattr(args, "keep_workspace", False))
+    try:
+        outcomes = run_suite(suite.suite_id, system, root,
+                             task_id=getattr(args, "task", None),
+                             runs=getattr(args, "runs", 1),
+                             config=runner_config)
+    except RunnerError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    # Always record the toolchain: a report whose lanes are unknown cannot be
+    # reproduced, and a missing lane hash would make two runs look comparable
+    # when they may not be.
+    lane_set = None
+    lane_snapshot = None
+    lane_warning = None
+    try:
+        lane_set = collect(lane_profile_for(system))
+        lane_snapshot = write_snapshot(lane_set)
+    except LaneError as exc:
+        lane_warning = str(exc)
+
+    report = build_report(suite, outcomes, lane_set, systems=[system],
+                          lane_snapshot=lane_snapshot)
+    if lane_warning:
+        report.environment["lanes_unavailable"] = lane_warning
+
+    out = Path(args.out) if getattr(args, "out", None) else (
+        runner_config.resolved_state_dir() / "reports"
+        / f"{suite.suite_id}-{system.name}.json")
+    report.write(out)
+
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        print(format_report(report))
+        print()
+        print(f"Report: {out}")
+    return 1 if any(not o.passed for o in outcomes) else 0
 
 
 def cmd_update(args: argparse.Namespace) -> int:
@@ -957,14 +1307,112 @@ def main(argv: list[str] | None = None) -> int:
     p_exec.add_argument("command", nargs=argparse.REMAINDER, help="Command to execute")
     p_exec.set_defaults(func=cmd_exec)
 
-    # bench
-    p_bench = subparsers.add_parser("bench", help="Benchmark a profile")
-    p_bench.add_argument("profile", help="Profile alias to benchmark")
-    p_bench.add_argument(
-        "--context-sizes",
-        help="Comma-separated list of context sizes to test (e.g. 8192,16384,32768)",
+    # bench — `sinter bench <profile>` stays the throughput benchmark (kept
+    # working by a shim in _parse_args_with_bench_shim); everything else is a
+    # subcommand. The parent takes no positional argument: an optional
+    # positional here would swallow the subcommand name.
+    p_bench = subparsers.add_parser(
+        "bench",
+        help="Benchmark a profile, or manage toolchain lanes and task suites",
     )
-    p_bench.add_argument("--json", action="store_true", help="Output as JSON")
+    bench_sub = p_bench.add_subparsers(dest="bench_command", required=True)
+
+    p_perf = bench_sub.add_parser("perf",
+                                  help="Throughput benchmark of a profile")
+    p_perf.add_argument("profile", help="Profile alias to benchmark")
+    p_perf.add_argument(
+        "--context-sizes",
+        help="Comma-separated list of context sizes to test "
+             "(e.g. 8192,16384,32768)",
+    )
+    p_perf.add_argument("--json", action="store_true", help="Output as JSON")
+
+    p_lane = bench_sub.add_parser(
+        "lane", help="Inventory the installed agent-toolchain lanes")
+    lane_sub = p_lane.add_subparsers(dest="lane_command", required=True)
+
+    p_lane_list = lane_sub.add_parser(
+        "list", help="List every discovered enhancement and its state")
+    p_lane_list.add_argument("--profile", default="web",
+                             help="dsh profile to inventory (default: web)")
+    p_lane_list.add_argument("--dsh-home", help="Override DSH_HOME")
+    p_lane_list.add_argument("--workspace", help="Workspace root to inspect")
+    p_lane_list.add_argument("--kind", action="append",
+                             help="Only this lane kind (repeatable)")
+    p_lane_list.add_argument("--no-dump", action="store_true",
+                             help="Skip the composed-tree probe (no dsh run)")
+    p_lane_list.add_argument("--json", action="store_true")
+
+    p_lane_snap = lane_sub.add_parser(
+        "snapshot", help="Write a lane snapshot for later diffing")
+    p_lane_snap.add_argument("--profile", default="web")
+    p_lane_snap.add_argument("--dsh-home")
+    p_lane_snap.add_argument("--workspace")
+    p_lane_snap.add_argument("--out", help="Output directory")
+    p_lane_snap.add_argument("--no-dump", action="store_true")
+    p_lane_snap.add_argument("--json", action="store_true")
+
+    p_lane_diff = lane_sub.add_parser(
+        "diff", help="Show what changed between two lane snapshots")
+    p_lane_diff.add_argument("before")
+    p_lane_diff.add_argument("after")
+    p_lane_diff.add_argument("--json", action="store_true")
+
+    p_lane_verify = lane_sub.add_parser(
+        "verify", help="Check that declared lanes actually activate")
+    p_lane_verify.add_argument("--profile", default="web")
+    p_lane_verify.add_argument("--dsh-home")
+    p_lane_verify.add_argument("--workspace")
+    p_lane_verify.add_argument("--no-dump", action="store_true")
+    p_lane_verify.add_argument("--json", action="store_true")
+
+    p_compare = bench_sub.add_parser(
+        "compare", help="Compare reports; attribute the difference to lanes")
+    p_compare.add_argument("--baseline", required=True,
+                           help="Baseline report JSON")
+    p_compare.add_argument("--candidate", required=True,
+                           help="Candidate report JSON")
+    p_compare.add_argument("--attribute", choices=["total", "marginal",
+                                                  "interaction"],
+                           help="How to attribute the difference")
+    p_compare.add_argument("--arm", action="append",
+                           help="LANE=REPORT for marginal attribution")
+    p_compare.add_argument("--member", action="append",
+                           help="LANE=REPORT for pairwise interaction")
+    p_compare.add_argument("--json", action="store_true")
+
+    p_system = bench_sub.add_parser("system", help="Systems under test")
+    system_sub = p_system.add_subparsers(dest="system_command", required=True)
+    p_system_list = system_sub.add_parser("list", help="List declared systems")
+    p_system_list.add_argument("--root", help="Benchmark root directory")
+    p_system_list.add_argument("--json", action="store_true")
+
+    p_suite = bench_sub.add_parser("suite", help="Task suites for the harness")
+    suite_sub = p_suite.add_subparsers(dest="suite_command", required=True)
+    p_suite_list = suite_sub.add_parser("list", help="List discoverable suites")
+    p_suite_list.add_argument("--root", help="Benchmark root directory")
+    p_suite_list.add_argument("--json", action="store_true")
+    p_suite_validate = suite_sub.add_parser("validate",
+                                            help="Validate a suite manifest")
+    p_suite_validate.add_argument("suite_id")
+    p_suite_validate.add_argument("--root")
+    p_suite_validate.add_argument("--json", action="store_true")
+    p_suite_run = suite_sub.add_parser(
+        "run", help="Plan (dry-run) or execute a suite")
+    p_suite_run.add_argument("--suite", required=True)
+    p_suite_run.add_argument("--root")
+    p_suite_run.add_argument("--system", help="System under test name")
+    p_suite_run.add_argument("--task", help="One task (default: all)")
+    p_suite_run.add_argument("--runs", type=int, default=1)
+    p_suite_run.add_argument("--dry-run", action="store_true",
+                             help="Validate and print the plan; run nothing")
+    p_suite_run.add_argument("--execute", action="store_true",
+                             help="Actually run the tasks (default: dry-run)")
+    p_suite_run.add_argument("--out", help="Where to write the run report")
+    p_suite_run.add_argument("--keep-workspace", action="store_true",
+                             help="Keep each task workspace for inspection")
+    p_suite_run.add_argument("--json", action="store_true")
+
     p_bench.set_defaults(func=cmd_bench)
 
     # update
@@ -1011,8 +1459,27 @@ def main(argv: list[str] | None = None) -> int:
     p_rd_down.add_argument("profile", help="Profile alias")
     p_rd_down.set_defaults(func=cmd_ramdisk_down)
 
-    args = parser.parse_args(argv)
+    args = _parse_args_with_bench_shim(parser, argv)
     return args.func(args)
+
+
+def _parse_args_with_bench_shim(parser: argparse.ArgumentParser,
+                                argv: list[str] | None):
+    """Parse argv, keeping the historical ``sinter bench <profile>`` form.
+
+    ``bench`` routes through subcommands, but the documented form has always
+    been ``sinter bench coding``. A bare profile alias is rewritten to the
+    explicit ``bench perf <profile>`` before parsing.
+    """
+    tokens = list(sys.argv[1:] if argv is None else argv)
+    if "bench" in tokens:
+        index = tokens.index("bench")
+        rest = tokens[index + 1:]
+        known = {"perf", "lane", "suite", "system", "compare"}
+        if rest and not rest[0].startswith("-") \
+                and not any(token in known for token in rest):
+            tokens = tokens[:index + 1] + ["perf"] + rest
+    return parser.parse_args(tokens)
 
 
 if __name__ == "__main__":
