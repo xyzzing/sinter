@@ -276,3 +276,39 @@ def test_newest_session_log_on_missing_root(tmp_path):
 def test_parse_records_accepts_an_iterable():
     lines = _session_lines([_assistant("a", {"totalTokens": 2})]).splitlines()
     assert parse_records(lines).usage.total_tokens == 2
+
+
+def test_find_session_logs_accepts_a_plain_jsonl_log(tmp_path):
+    """A runtime without stdlib zstd writes plain JSONL.
+
+    Python < 3.14 has no compression.zstd, so a harness there writes
+    session.v3.jsonl. A watcher that only globbed the compressed name found
+    nothing and silently accounted zero tokens for the whole run.
+    """
+    directory = tmp_path / "--ws--" / "session-plain"
+    directory.mkdir(parents=True)
+    log = directory / "session.v3.jsonl"
+    log.write_text(PLAIN.read_text())
+
+    found = find_session_logs(tmp_path, cwd="/ws")
+    assert found == [log]
+    assert newest_session_log(tmp_path, cwd="/ws") == log
+    assert parse_session(log).usage.total_tokens > 0
+
+
+def test_compressed_form_is_preferred_when_both_exist(tmp_path):
+    directory = tmp_path / "--ws--" / "session-both"
+    directory.mkdir(parents=True)
+    plain = directory / "session.v3.jsonl"
+    plain.write_text(PLAIN.read_text())
+    compressed = directory / "session.v3.jsonl.zstd"
+    if HAS_ZSTD:
+        import compression.zstd
+        compressed.write_bytes(compression.zstd.compress(plain.read_bytes()))
+    else:  # pragma: no cover - Python < 3.14
+        compressed.write_bytes(b"not readable here")
+
+    chosen = newest_session_log(tmp_path, cwd="/ws")
+    assert chosen is not None
+    if HAS_ZSTD:
+        assert chosen.suffix == ".zstd"

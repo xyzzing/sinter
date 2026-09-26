@@ -286,6 +286,12 @@ def parse_bytes(payload: bytes) -> SessionTranscript:
     return parse_records(payload.splitlines())
 
 
+#: A log may be compressed or plain. dsh writes zstd, but a harness on a
+#: runtime without stdlib zstd (Python < 3.14) writes plain JSONL, and a
+#: watcher that only looked for one form would silently account zero tokens.
+SESSION_LOG_PATTERNS = ("*/*/session.v3.jsonl.zstd", "*/*/session.v3.jsonl")
+
+
 def find_session_logs(sessions_root: Union[str, Path],
                       cwd: Optional[str] = None) -> list[Path]:
     """Locate session logs, optionally for one working directory.
@@ -296,8 +302,10 @@ def find_session_logs(sessions_root: Union[str, Path],
     root = Path(sessions_root)
     if not root.is_dir():
         return []
-    pattern = "*/*/session.v3.jsonl.zstd"
-    logs = sorted(root.glob(pattern))
+    found: set[Path] = set()
+    for pattern in SESSION_LOG_PATTERNS:
+        found.update(root.glob(pattern))
+    logs = sorted(found)
     if cwd is not None:
         encoded = "--" + cwd.strip("/").replace("/", "-") + "--"
         logs = [path for path in logs if path.parts[-3].startswith(encoded)]
@@ -318,4 +326,10 @@ def newest_session_log(sessions_root: Union[str, Path],
                       if path.stat().st_mtime >= started_after]
     if not candidates:
         return None
-    return max(candidates, key=lambda path: path.stat().st_mtime)
+    newest = max(candidates, key=lambda path: path.stat().st_mtime)
+    # Same session recorded twice: prefer the compressed copy.
+    if newest.suffix != ".zstd":
+        compressed = newest.with_name(newest.name + ".zstd")
+        if compressed.is_file():
+            return compressed
+    return newest
