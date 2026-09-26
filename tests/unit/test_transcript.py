@@ -22,8 +22,25 @@ from sinter.transcript import (
     read_lines,
 )
 
-FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "transcript" / \
-    "session-minimal.v3.jsonl.zstd"
+FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "transcript"
+#: The same session is shipped compressed and plain. compression.zstd is
+#: stdlib only from Python 3.14, and CI runs 3.11-3.14, so tests resolve
+#: whichever form this interpreter can read rather than assuming one.
+COMPRESSED = FIXTURE_DIR / "session-minimal.v3.jsonl.zstd"
+PLAIN = FIXTURE_DIR / "session-minimal.v3.jsonl"
+
+try:  # noqa: SIM105 - explicit probe keeps the reason visible
+    import compression.zstd  # noqa: F401
+    HAS_ZSTD = True
+except ImportError:  # pragma: no cover - exercised on Python < 3.14
+    HAS_ZSTD = False
+
+FIXTURE = COMPRESSED if HAS_ZSTD else PLAIN
+
+requires_zstd = pytest.mark.skipif(
+    not HAS_ZSTD,
+    reason="session logs are zstd-compressed and compression.zstd needs "
+           "Python 3.14+; the plain fixture covers the other runtimes")
 
 
 def _session_lines(events: list[dict], header: dict | None = None) -> bytes:
@@ -69,10 +86,9 @@ def test_parse_checked_in_session_fixture():
 
 
 def test_fixture_carries_no_private_paths():
-    raw = Path(FIXTURE).read_bytes()
-    from sinter.transcript import _decompress
-    text = _decompress(raw, FIXTURE)
-    assert b"/home/" not in b"\n".join(text)
+    text = Path(PLAIN).read_bytes()
+    assert b"/home/" not in text
+    assert b"/TMP-WORKSPACE" in text
 
 
 # --- accounting -----------------------------------------------------------
@@ -204,6 +220,7 @@ def test_plain_jsonl_is_accepted(tmp_path):
     assert parse_session(path).usage.total_tokens == 3
 
 
+@requires_zstd
 def test_undecompressable_log_raises(tmp_path):
     path = tmp_path / "broken.zstd"
     path.write_bytes(b"\x28\xb5\x2f\xfd definitely not zstd")

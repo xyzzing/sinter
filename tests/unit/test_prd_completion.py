@@ -136,19 +136,39 @@ def test_uuid_in_environment():
             proc = type("MockProc", (), {"pid": 12345})()
             return proc
 
-        with patch("subprocess.Popen", mock_popen):
-            with patch("sinter.supervisor.Supervisor._read_proc_stat", return_value=1000):
-                with patch("sinter.supervisor.Supervisor._poll_exit", return_value=True):
-                    profile = ProfileSpec(
-                        alias="test",
-                        weights_path=weights_path,
-                        port=18080,  # Use non-standard port to avoid conflicts
-                    )
-                    try:
-                        sup.launch(profile)
-                    except Exception:
-                        pass
+        # This test is about the instance marker in the child environment, so
+        # the admission gate and the readiness probe are stubbed deliberately.
+        # Left real they make the test environment-dependent: without
+        # llama-server, validate_profile reports a missing backend and launch()
+        # returns before spawning, so Popen is never reached -- which is
+        # exactly how this failed on CI while passing on a workstation that
+        # has the binary. The bare `except Exception: pass` that used to wrap
+        # launch() hid that, and left the assertion to catch it instead.
+        profile = ProfileSpec(
+            alias="test",
+            weights_path=weights_path,
+            port=18080,  # Use non-standard port to avoid conflicts
+        )
 
+        class _ReadyResponse:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        with patch("sinter.config.validate_profile", return_value=[]), \
+                patch("subprocess.Popen", mock_popen), \
+                patch("urllib.request.urlopen",
+                      return_value=_ReadyResponse()), \
+                patch("sinter.supervisor.Supervisor._read_proc_stat",
+                      return_value=1000), \
+                patch("sinter.supervisor.Supervisor._start_sentinel"):
+            result = sup.launch(profile, timeout=5.0)
+
+        assert result.state == "READY", getattr(result, "last_error", "")
         assert "__SINTER_INSTANCE" in captured_env
         # UUID should be 36 chars
         assert len(captured_env["__SINTER_INSTANCE"]) == 36
